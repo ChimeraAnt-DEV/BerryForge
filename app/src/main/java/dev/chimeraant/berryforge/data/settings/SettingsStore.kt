@@ -93,6 +93,15 @@ class SettingsStore(private val context: Context) {
 }
 
 enum class TunnelMode(val label: String, val description: String) {
+    /**
+     * Serve on the local network from this device, with no third-party service.
+     *
+     * For users who cannot get a tunnel working — no outbound access, a locked-down
+     * network, or simply not wanting a public endpoint — this exposes the MCP server on
+     * the device's own LAN address so another machine on the same Wi-Fi can connect to
+     * it directly.
+     */
+    LAN("On this device (LAN)", "No tunnel needed. Other devices on your Wi-Fi connect directly"),
     CLOUDFLARE("Cloudflare Tunnel", "Free, no account or domain required"),
     NGROK("ngrok", "Paste your own authtoken"),
     CUSTOM("Custom relay", "Point at a relay you host yourself"),

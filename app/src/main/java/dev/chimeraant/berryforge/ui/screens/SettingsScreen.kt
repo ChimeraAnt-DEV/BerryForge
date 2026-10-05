@@ -277,12 +277,26 @@ fun SettingsScreen(
                         }
                     }
 
+                    val lanEndpoint by viewModel.lanEndpoint.collectAsStateWithLifecycle()
                     val endpoint = (tunnelState as? TunnelState.Up)?.publicUrl
                     if (endpoint != null) {
                         Spacer(Modifier.height(BerrySpacing.md))
-                        Text("PUBLIC ENDPOINT", style = BerryType.Overline, color = BerryColors.TextTertiary)
+                        Text(
+                            if (lanEndpoint != null) "ENDPOINT ON YOUR NETWORK" else "PUBLIC ENDPOINT",
+                            style = BerryType.Overline,
+                            color = BerryColors.TextTertiary,
+                        )
                         Spacer(Modifier.height(BerrySpacing.xs))
                         CopyRow(label = endpoint) { viewModel.copyEndpoint(endpoint) }
+                        if (lanEndpoint != null) {
+                            Spacer(Modifier.height(BerrySpacing.xs))
+                            Text(
+                                "This device is hosting the server. Another device on the same Wi-Fi can " +
+                                    "connect to that address with the bearer token below. No tunnel involved.",
+                                style = BerryType.Caption,
+                                color = BerryColors.TextTertiary,
+                            )
+                        }
                     } else if (mcpStatus is McpStatus.Running) {
                         // With no tunnel the server is still reachable on loopback; show
                         // that URL so the user can verify it from a local terminal.

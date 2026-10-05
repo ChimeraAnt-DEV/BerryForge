@@ -78,6 +78,17 @@ class TunnelManager(
         _state.value = TunnelState.Starting(mode, "Preparing agent")
         val result = runCatching {
             when (mode) {
+                // On-device host mode runs no tunnel process: the server is bound to
+                // every interface and the device itself is the host, so there is nothing
+                // for the tunnel layer to do.
+                TunnelMode.LAN -> {
+                    val ip = localNetworkAddress()
+                    if (ip != null) {
+                        TunnelState.Up(mode, "http://$ip:$localPort", "http://127.0.0.1:$localPort")
+                    } else {
+                        TunnelState.Failed(mode, "No network address found. Connect to Wi-Fi, then start again.")
+                    }
+                }
                 TunnelMode.CLOUDFLARE -> startCloudflare(localPort)
                 TunnelMode.NGROK -> startNgrok(localPort)
                 TunnelMode.CUSTOM -> startCustom(localPort)
@@ -102,6 +113,22 @@ class TunnelManager(
         }
         process = null
     }
+
+    /**
+     * The device's own address on the local network, or null when not on one.
+     *
+     * Used by on-device host mode so the user has a URL to give another machine. Reads
+     * the interface directly rather than the public address, because the point is a
+     * same-network connection with no external service involved.
+     */
+    fun localNetworkAddress(): String? = runCatching {
+        java.net.NetworkInterface.getNetworkInterfaces().toList()
+            .filter { it.isUp && !it.isLoopback }
+            .filterNot { it.name.startsWith("rmnet") || it.name.startsWith("dummy") }
+            .flatMap { iface -> iface.inetAddresses.toList().map { addr -> addr } }
+            .firstOrNull { addr -> addr is java.net.Inet4Address && !addr.isLoopbackAddress }
+            ?.hostAddress
+    }.getOrNull()
 
     // ---- Cloudflare ----
 

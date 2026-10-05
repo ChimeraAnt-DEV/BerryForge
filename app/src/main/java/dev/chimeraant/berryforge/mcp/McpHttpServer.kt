@@ -47,6 +47,11 @@ class McpHttpServer(
     @Volatile
     private var boundPort: Int = 0
 
+    /** True when the socket is reachable from the local network rather than loopback. */
+    @Volatile
+    var boundToLan: Boolean = false
+        private set
+
     /** Live connection count, used to cap concurrency. */
     private val activeConnections = java.util.concurrent.atomic.AtomicInteger(0)
 
@@ -67,16 +72,34 @@ class McpHttpServer(
      * failure to bind, such as the port already being in use, is returned rather than
      * being lost in a background coroutine.
      */
-    fun start(port: Int): Result<Int> = runCatching {
+    /**
+     * Binds the server.
+     *
+     * [bindAddress] defaults to loopback, so nothing is reachable off-device unless the
+     * caller asks for it. Passing `0.0.0.0` exposes the server on the local network,
+     * which is the "host it on this device" option for users who cannot get a tunnel:
+     * another machine on the same Wi-Fi can reach it directly at the device's LAN
+     * address, with no third-party service involved.
+     *
+     * The port is a parameter rather than a constructor value so the caller never has to
+     * read a preference synchronously. The bind happens inline so the caller gets the
+     * real result — a failure such as the port already being in use is returned rather
+     * than being lost in a background coroutine.
+     */
+    fun start(
+        port: Int,
+        bindAddress: String = LOOPBACK,
+    ): Result<Int> = runCatching {
         if (running) return@runCatching boundPort
         val socket = ServerSocket()
         socket.reuseAddress = true
-        socket.bind(java.net.InetSocketAddress(InetAddress.getByName("127.0.0.1"), port))
+        socket.bind(java.net.InetSocketAddress(InetAddress.getByName(bindAddress), port))
         serverSocket = socket
         boundPort = socket.localPort
         running = true
+        boundToLan = bindAddress != LOOPBACK
         acceptJob = scope.launch { acceptLoop(socket) }
-        Log.i(TAG, "MCP server bound to 127.0.0.1:$boundPort")
+        Log.i(TAG, "MCP server bound to $bindAddress:$boundPort")
         boundPort
     }.onFailure { error ->
         Log.e(TAG, "MCP server failed to bind on port $port", error)
@@ -90,6 +113,7 @@ class McpHttpServer(
         acceptJob?.cancel()
         serverSocket = null
         boundPort = 0
+        boundToLan = false
         // Close the recorded agent session so it lands in history with its diff.
         runCatching { handler.closeAllSessions() }
     }
@@ -419,6 +443,12 @@ class McpHttpServer(
 
     companion object {
         private const val TAG = "McpHttpServer"
+
+        /** Loopback bind, so the server is not reachable off-device by default. */
+        const val LOOPBACK = "127.0.0.1"
+
+        /** Bind every interface, exposing the server on the local network. */
+        const val ANY = "0.0.0.0"
 
         /** Longest a client may hold a connection without sending anything. */
         private const val SOCKET_TIMEOUT_MS = 30_000

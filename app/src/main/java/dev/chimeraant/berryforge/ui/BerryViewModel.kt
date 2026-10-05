@@ -107,6 +107,10 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
     private val _mcpStatus = MutableStateFlow<McpStatus>(McpStatus.Stopped)
     val mcpStatus: StateFlow<McpStatus> = _mcpStatus.asStateFlow()
 
+    /** Device LAN endpoint when running in on-device host mode, else null. */
+    private val _lanEndpoint = MutableStateFlow<String?>(null)
+    val lanEndpoint: StateFlow<String?> = _lanEndpoint.asStateFlow()
+
     val commitFlow get() = container.commitFlow
     val gradle get() = container.gradle
     val toolchain get() = container.toolchain
@@ -524,20 +528,45 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
      *
      * The bind result drives the status: the UI no longer assumes success, so a port
      * already in use surfaces as a visible failure instead of a green "Running".
+     *
+     * In LAN mode the server binds every interface so other devices on the same network
+     * can reach it, and the endpoint shown is the device's own address on that network.
+     * This is the fallback for users who cannot get a public tunnel working.
      */
     fun startMcp() {
         if (_mcpStatus.value is McpStatus.Starting || _mcpStatus.value is McpStatus.Running) return
         viewModelScope.launch {
             _mcpStatus.value = McpStatus.Starting
             val port = container.settings.mcpPort.first()
+            val mode = container.settings.tunnelMode.first()
             val token = container.secure.mcpTokenOrCreate()
             runCatching { container.shellEnv.ensureShims() }
 
-            container.mcpHttpServer.start(port)
+            val bindAddress = if (mode == dev.chimeraant.berryforge.data.settings.TunnelMode.LAN) {
+                dev.chimeraant.berryforge.mcp.McpHttpServer.ANY
+            } else {
+                dev.chimeraant.berryforge.mcp.McpHttpServer.LOOPBACK
+            }
+
+            container.mcpHttpServer.start(port, bindAddress)
                 .onSuccess { actualPort ->
-                    _mcpStatus.value = McpStatus.Running(actualPort, "http://127.0.0.1:$actualPort")
+                    val localUrl = "http://127.0.0.1:$actualPort"
+                    _mcpStatus.value = McpStatus.Running(actualPort, localUrl)
+
+                    if (mode == dev.chimeraant.berryforge.data.settings.TunnelMode.LAN) {
+                        // No tunnel process: the device is the host. Report its LAN
+                        // address so the user has something to paste into a client.
+                        val lanIp = container.tunnels.localNetworkAddress()
+                        if (lanIp != null) {
+                            _lanEndpoint.value = "http://$lanIp:$actualPort"
+                        } else {
+                            toast("No Wi-Fi address found. Connect to a network, then start again.")
+                        }
+                    } else {
+                        _lanEndpoint.value = null
+                        container.tunnels.start(actualPort)
+                    }
                     dev.chimeraant.berryforge.mcp.McpTunnelService.start(container.appContext)
-                    container.tunnels.start(actualPort)
                 }
                 .onFailure { error ->
                     val message = when {
@@ -558,6 +587,7 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
         container.tunnels.stop()
         container.mcpHttpServer.stop()
         dev.chimeraant.berryforge.mcp.McpTunnelService.stop(container.appContext)
+        _lanEndpoint.value = null
         _mcpStatus.value = McpStatus.Stopped
     }
 
