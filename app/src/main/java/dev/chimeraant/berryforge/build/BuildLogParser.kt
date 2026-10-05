@@ -39,11 +39,23 @@ enum class ErrorKind { Kotlin, Java, Cpp, Gradle, Test, Resource, Manifest, Unkn
 class BuildLogParser {
 
     private val kotlinError = Regex("""^([ew]):\s*(?:file://)?(.+?):(\d+):(\d+)\s+(.*)$""")
-    private val javaError = Regex("""^(?:\[ant:javac\]\s*)?(.+?\.java):(\d+):\s*(?:error|warning):\s*(.*)$""")
-    private val cppError = Regex("""^(.+?\.(?:cpp|cc|cxx|h|hpp)):(\d+):(?:(\d+):)?\s*(?:error|fatal error):\s*(.*)$""")
+    /** javac: "<path>:<line>: error: msg" — the severity word is captured. */
+    private val javaError = Regex("""^(?:\[ant:javac\]\s*)?(.+?\.java):(\d+):\s*(error|warning):\s*(.*)$""")
+    /** clang: "<path>:<line>:<col>: error: msg" — column and severity captured. */
+    private val cppError = Regex("""^(.+?\.(?:cpp|cc|cxx|h|hpp)):(\d+):(?:(\d+):)?\s*(error|fatal error|warning):\s*(.*)$""")
     private val gradleFile = Regex("""^(.+?\.gradle(?:\.kts)?):(\d+)\s*(.*)$""")
+    /**
+     * Gradle test failure: "Class > method FAILED", optionally indented.
+     * Matches both the plain form and the fully-qualified "com.foo.BarTest > testBaz FAILED".
+     */
+    private val gradleTestFailure = Regex("""^(.+?\s*>\s*.+?)\s+FAILED$""")
     private val testFailure = Regex("""^(?:\s*)FAILED\s+(.+?)\s*$""")
     private val manifestError = Regex("""^.*AndroidManifest\.xml:(\d+):(?:(\d+):)?\s*(?:error:\s*)?(.*)$""")
+
+    /** A labelled "error:" token, so the word "error" inside prose does not count. */
+    private val labeledError = Regex("""(?:^|\s)(?:error|fatal error|e)\s*:""")
+    /** A labelled "warning:" token. */
+    private val labeledWarning = Regex("""(?:^|\s)(?:warning|warn|w)\s*:""")
 
     fun classify(raw: String): LogLine {
         val text = raw.trimEnd()
@@ -61,11 +73,15 @@ class BuildLogParser {
                 kind = ErrorKind.Kotlin,
                 raw = text,
             )
-            return LogLine(text, LogStream.Error, severity, error)
+            return LogLine(text, LogStream.Out, severity, error)
         }
 
+        // javac and clang both emit "<path>:<line>: error: msg" or ": warning: msg".
+        // The severity word decides which; the old parser treated every match as an
+        // error, so warnings inflated the error count.
         javaError.find(trimmed)?.let { match ->
-            val (path, line, message) = match.destructured
+            val (path, line, level, message) = match.destructured
+            val severity = if (level.equals("warning", ignoreCase = true)) LogSeverity.Warn else LogSeverity.Error
             val error = BuildError(
                 path = normalisePath(path),
                 line = line.toIntOrNull() ?: 1,
@@ -73,11 +89,12 @@ class BuildLogParser {
                 kind = ErrorKind.Java,
                 raw = text,
             )
-            return LogLine(text, LogStream.Error, LogSeverity.Error, error)
+            return LogLine(text, LogStream.Out, severity, error)
         }
 
         cppError.find(trimmed)?.let { match ->
-            val (path, line, column, message) = match.destructured
+            val (path, line, column, level, message) = match.destructured
+            val severity = if (level.startsWith("warning", ignoreCase = true)) LogSeverity.Warn else LogSeverity.Error
             val error = BuildError(
                 path = normalisePath(path),
                 line = line.toIntOrNull() ?: 1,
@@ -86,7 +103,7 @@ class BuildLogParser {
                 kind = ErrorKind.Cpp,
                 raw = text,
             )
-            return LogLine(text, LogStream.Error, LogSeverity.Error, error)
+            return LogLine(text, LogStream.Out, severity, error)
         }
 
         gradleFile.find(trimmed)?.let { match ->
@@ -115,6 +132,21 @@ class BuildLogParser {
         }
 
         // ---- Test failures ----
+        // Gradle reports a failing test as "Class > method FAILED", optionally indented,
+        // sometimes followed by the assertion on the next line. The old pattern required
+        // the line to start with FAILED, so these were never recognised and the failing
+        // test list was always empty.
+        gradleTestFailure.find(trimmed)?.let { match ->
+            val (name) = match.destructured
+            val error = BuildError(
+                path = "",
+                line = 0,
+                message = "Test failed: $name",
+                kind = ErrorKind.Test,
+                raw = text,
+            )
+            return LogLine(text, LogStream.Error, LogSeverity.Error, error)
+        }
         testFailure.find(trimmed)?.let { match ->
             val (name) = match.destructured
             if (name.contains(":")) {
@@ -130,16 +162,20 @@ class BuildLogParser {
         }
 
         // ---- Line-level severity ----
+        // Ordered so the most specific patterns win. Kotlin warnings ("w:") and javac
+        // warnings must not fall through to the generic "contains error" branch below.
         val severity = when {
             trimmed.startsWith("BUILD SUCCESSFUL") -> LogSeverity.Success
             trimmed.startsWith("BUILD FAILED") -> LogSeverity.Error
             trimmed.startsWith("FAILURE:") -> LogSeverity.Error
-            trimmed.contains("FAILED") && trimmed.contains("Task") -> LogSeverity.Error
-            trimmed.startsWith("> Task") && trimmed.endsWith("FAILED") -> LogSeverity.Error
-            trimmed.startsWith("w:") || trimmed.startsWith("warning:", ignoreCase = true) -> LogSeverity.Warn
+            trimmed.startsWith("w:") -> LogSeverity.Warn
+            trimmed.startsWith("warning:", ignoreCase = true) -> LogSeverity.Warn
             trimmed.startsWith("e:") -> LogSeverity.Error
-            trimmed.contains("warning", ignoreCase = true) && trimmed.contains(":", ignoreCase = true) -> LogSeverity.Warn
-            trimmed.contains("error", ignoreCase = true) && trimmed.contains(":", ignoreCase = true) -> LogSeverity.Error
+            trimmed.startsWith("> Task") && trimmed.endsWith("FAILED") -> LogSeverity.Error
+            trimmed.contains("FAILED") && trimmed.contains("Task") -> LogSeverity.Error
+            // "error:" / "warning:" as a labelled token, not the substring "error".
+            labeledError.containsMatchIn(trimmed) -> LogSeverity.Error
+            labeledWarning.containsMatchIn(trimmed) -> LogSeverity.Warn
             else -> LogSeverity.Info
         }
         return LogLine(
