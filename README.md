@@ -89,16 +89,84 @@ UI says so.
 
 ## Known limitations
 
-- **The tunnel is not verified end to end.** It cannot be exercised in a headless
-  build environment. See [docs/PHASE3_TUNNEL_NOTES.md](docs/PHASE3_TUNNEL_NOTES.md)
-  for what is implemented, what is untested, and how to verify it on a device.
+These are stated plainly because several of them are not fixable in code and the
+earlier version of this file implied otherwise.
+
+### On-device builds cannot execute binaries unpacked into app storage
+
+Android 10 (API 29) and later enforce W^X: the platform refuses to `execve()` a file
+that lives in a writable app-private directory, regardless of the file's mode bits.
+
+That is exactly what the toolchain installer does — it unpacks a JDK and Android
+build-tools into `filesDir` and then tries to run them. Termux and AndroidIDE work
+around this by targeting SDK 28. BerryForge targets SDK 35, so the restriction
+applies, and **an on-device Gradle build cannot work by unpacking and executing
+binaries this way.**
+
+What is fixed and what is not:
+
+- The download, checksum, extraction and layout problems are fixed. The installer
+  fetches aarch64 artefacts, installs the JDK's native dependencies and trust store,
+  and produces a correct tree.
+- Every **Termux package** is SHA-256 verified against the hash published in the
+  repository index. The **build-tools tarball and the platform zip are not
+  checksum-verified** — neither publisher offers a stable digest for those URLs, and
+  inventing one would be worse than saying so. A failed or partial download is still
+  rejected, because the extraction is checked for the specific files it must produce.
+- Invoking `gradlew` as `sh gradlew` rather than `./gradlew` fixes the shebang
+  lookup, but does **not** lift W^X.
+- The workaround that does work is shipping the executables inside the APK as
+  `jniLibs`, which the platform treats as read-only and executable, instead of
+  extracting them at runtime. That is a packaging change and is not done here.
+
+The editor, AI review, GitHub flows, MCP server, sandbox and terminal all work
+without the toolchain. Only `run_build`, `run_tests` and on-device compilation are
+affected.
+
+### The tunnel is not verified end to end
+
+It cannot be exercised in a headless build environment. See
+[docs/PHASE3_TUNNEL_NOTES.md](docs/PHASE3_TUNNEL_NOTES.md) for what is implemented,
+what is untested, and how to verify it on a device.
+
+### Toolchain packages are version-pinned
+
+`ToolchainManifest` pins exact Termux filenames, sizes and SHA-256 hashes. They
+cannot break silently, but they also will not pick up security updates. When Termux
+rotates a package the filename changes and the download fails with a clear 404,
+which is the intended failure mode. Regenerating the manifest is the upgrade path.
+
+### No `git` or `curl` in the terminal
+
+Android ships neither, and the shims that previously pretended to provide them could
+not work: they called an endpoint that was never implemented, invoked `python3`
+(which Android lacks) and read an environment variable nothing set. They have been
+removed, and the shell banner lists what is actually available. `gradle` is still
+shimmed because it only needs `gradlew`, which exists.
+
+### Other
+
 - **The contribution graph is approximate.** GitHub exposes no public calendar
-  endpoint, so the profile strip is derived from recent public push events. The
-  UI labels it as such.
-- **`git` and `curl` in the terminal are shims**, not real binaries. Android ships
-  neither, and bundling a full Git for every ABI would dominate the APK.
-- **The MCP client id in `GitHubAuth` is a public device-flow client id.** Replace
-  it with your own registered OAuth App id to sign in against a different client.
+  endpoint, so the profile strip is derived from recent public push events. The UI
+  labels it as such.
+- **The MCP client id in `GitHubAuth` is a public device-flow client id.** Replace it
+  with your own registered OAuth App id to sign in against a different client.
+- **The diff engine degrades above ~4M line-pairs.** Rather than allocating an
+  enormous LCS table on a phone it falls back to a prefix comparison, so a very large
+  file reports an approximate diff.
+- **Approval prompts auto-deny after five minutes.** That is deliberate — an
+  unattended device should not be drivable — but it means a long-running agent needs
+  the user present.
+
+## Tests
+
+```bash
+./gradlew testDebugUnitTest
+```
+
+47 unit tests across the build log parser, the diff engine, MCP argument validation
+and archive extraction. They are pure JVM, so they run without a device, and CI runs
+them plus lint on every push and pull request.
 
 ## Manual test checklists
 
