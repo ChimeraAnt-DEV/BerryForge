@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">BerryForge</string>
+    <string name="mcp_channel_name">MCP tunnel</string>
+    <string name="mcp_channel_desc">Keeps the BerryForge MCP endpoint reachable while a remote agent is connected.</string>
 </resources>

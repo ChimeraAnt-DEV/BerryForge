@@ -5,6 +5,11 @@ import dev.chimeraant.berryforge.ai.AiReviewService
 import dev.chimeraant.berryforge.build.BuildLogParser
 import dev.chimeraant.berryforge.build.GradleRunner
 import dev.chimeraant.berryforge.build.ToolchainInstaller
+import dev.chimeraant.berryforge.mcp.McpHttpServer
+import dev.chimeraant.berryforge.mcp.McpServer
+import dev.chimeraant.berryforge.mcp.TunnelManager
+import dev.chimeraant.berryforge.session.SessionRecorder
+import dev.chimeraant.berryforge.terminal.ShellEnvironment
 import dev.chimeraant.berryforge.data.editor.EditorWorkspace
 import dev.chimeraant.berryforge.data.github.CommitFlow
 import dev.chimeraant.berryforge.data.github.GitHubApi
@@ -13,6 +18,7 @@ import dev.chimeraant.berryforge.data.github.RepoCache
 import dev.chimeraant.berryforge.data.settings.SecureStore
 import dev.chimeraant.berryforge.data.settings.SettingsStore
 import dev.chimeraant.berryforge.sandbox.SandboxGuard
+import kotlinx.coroutines.flow.first
 
 /**
  * Hand-rolled dependency container. A DI framework would cost cold-start time for no
@@ -38,4 +44,35 @@ class AppContainer(private val context: Context) {
     val toolchain: ToolchainInstaller by lazy { ToolchainInstaller(context) }
     val gradle: GradleRunner by lazy { GradleRunner(context, toolchain) }
     val buildLogs: BuildLogParser by lazy { BuildLogParser() }
+
+    val shellEnv: ShellEnvironment by lazy { ShellEnvironment(context, toolchain) }
+    val sessions: SessionRecorder by lazy { SessionRecorder(context, workspace) }
+
+    val mcpServer: McpServer by lazy {
+        McpServer(
+            context = context,
+            api = api,
+            cache = repoCache,
+            workspace = workspace,
+            gradle = gradle,
+            buildLogs = buildLogs,
+            settings = settings,
+            secure = secure,
+            sandbox = sandbox,
+            sessions = sessions,
+        )
+    }
+
+    val tunnels: TunnelManager by lazy { TunnelManager(context, settings, secure) }
+
+    /**
+     * The loopback HTTP server hosting the MCP endpoint. Bound to the port from Settings
+     * at first use, so nothing opens a socket until the user turns the MCP server on.
+     */
+    val mcpHttpServer: McpHttpServer by lazy {
+        McpHttpServer(
+            port = kotlinx.coroutines.runBlocking { settings.mcpPort.first() },
+            handler = mcpServer,
+        )
+    }
 }

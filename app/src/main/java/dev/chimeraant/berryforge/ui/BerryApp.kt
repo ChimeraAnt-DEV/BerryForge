@@ -27,6 +27,7 @@ import dev.chimeraant.berryforge.ui.design.BerryColors
 import dev.chimeraant.berryforge.ui.design.BerryIcons
 import dev.chimeraant.berryforge.ui.screens.BuildScreen
 import dev.chimeraant.berryforge.ui.screens.EditorScreen
+import dev.chimeraant.berryforge.ui.screens.SettingsScreen
 import dev.chimeraant.berryforge.ui.screens.ToolchainWizardScreen
 import dev.chimeraant.berryforge.ui.screens.FileTreeScreen
 import dev.chimeraant.berryforge.ui.screens.ReposScreen
@@ -125,6 +126,12 @@ fun BerryApp(viewModel: BerryViewModel) {
                                     )
                                 }
                             }
+
+                            dest == Destination.Settings -> SettingsScreen(
+                                viewModel = viewModel,
+                                onOpenWizard = { showWizard = true },
+                                onProfileClick = { destination = Destination.Settings },
+                            )
 
                             else -> BerryEmptyState(
                                 icon = BerryIcons.Layers,

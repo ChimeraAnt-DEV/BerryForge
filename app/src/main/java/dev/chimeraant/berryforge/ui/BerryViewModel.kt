@@ -88,6 +88,11 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
     val commitFlow get() = container.commitFlow
     val gradle get() = container.gradle
     val toolchain get() = container.toolchain
+    val sessions get() = container.sessions
+    val mcp get() = container.mcpServer
+    val mcpHttpServer get() = container.mcpHttpServer
+    val tunnels get() = container.tunnels
+    val shellEnv get() = container.shellEnv
     val api get() = container.api
     val repoCache get() = container.repoCache
     val settings get() = container.settings
@@ -348,6 +353,42 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
 
 
 
+
+
+    /** Copies arbitrary text to the clipboard with a confirmation toast. */
+    fun copyText(value: String, confirmation: String = "Copied.") {
+        if (value.isBlank()) return
+        runCatching {
+            val clipboard = container.appContext
+                .getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("BerryForge", value))
+            toast(confirmation)
+        }.onFailure { toast("Could not copy.") }
+    }
+
+    /** Copies the live MCP endpoint to the clipboard. */
+    fun copyEndpoint(endpoint: String?) = copyText(endpoint.orEmpty(), "Endpoint copied.")
+
+    /** Starts the MCP server and, per settings, its tunnel. */
+    fun startMcp() {
+        viewModelScope.launch {
+            val port = container.settings.mcpPort.first()
+            val token = container.secure.mcpTokenOrCreate()
+            container.shellEnv.ensureShims(port, token)
+            container.mcpHttpServer.start()
+                .onSuccess { actual ->
+                    dev.chimeraant.berryforge.mcp.McpTunnelService.start(container.appContext)
+                    container.tunnels.start(actual)
+                }
+                .onFailure { toast(it.message ?: "Could not start the MCP server.") }
+        }
+    }
+
+    fun stopMcp() {
+        container.tunnels.stop()
+        container.mcpHttpServer.stop()
+        dev.chimeraant.berryforge.mcp.McpTunnelService.stop(container.appContext)
+    }
 
     /**
      * Begins a fresh sign-in without discarding existing accounts, so a second account
