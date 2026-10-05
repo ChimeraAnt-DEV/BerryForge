@@ -180,6 +180,7 @@ class ToolchainInstaller(private val context: Context) {
                 error("The JDK archive unpacked but bin/java is missing.")
             }
             note("JDK installed at ${jdkHome.absolutePath}")
+            installTrustStore()
 
             _state.value = ToolchainState.Downloading(steps[1].label, "Starting", 0, steps[1].approxBytes, 0f)
             installBuildTools(1, steps[1], onProgress)
@@ -361,6 +362,36 @@ class ToolchainInstaller(private val context: Context) {
                 }
             }
         }
+    }
+
+    /**
+     * Installs the JVM trust store.
+     *
+     * The `openjdk-21` package ships no `lib/security` directory at all, so there is no
+     * `cacerts` and every TLS connection the JVM makes fails with a certificate error.
+     * Termux normally fixes this in `ca-certificates-java`'s post-install script, which
+     * runs `keytool` — something we cannot execute, because a .deb's maintainer scripts
+     * are not applied during extraction.
+     *
+     * Instead the keystore is copied from where the package puts it. It is built for
+     * java-17, but a JSSE trust store is just a keystore of trusted CA certificates and
+     * is not version-specific, so JDK 21 reads it unchanged. It is installed as both
+     * `cacerts` and `jssecacerts` because the JVM prefers the latter when present.
+     */
+    private fun installTrustStore() {
+        val securityDir = File(jdkHome, "lib/security")
+        val source = File(usrPrefix, "lib/jvm/java-17-openjdk/lib/security/jssecacerts")
+        if (!source.exists()) {
+            note("Trust store not found at ${source.absolutePath}; HTTPS from the JVM will fail.")
+            return
+        }
+        runCatching {
+            securityDir.mkdirs()
+            val bytes = source.readBytes()
+            File(securityDir, "cacerts").writeBytes(bytes)
+            File(securityDir, "jssecacerts").writeBytes(bytes)
+            note("Trust store installed (${bytes.size / 1024} KB) at ${securityDir.absolutePath}")
+        }.onFailure { note("Could not install the trust store: ${it.message}") }
     }
 
     /**

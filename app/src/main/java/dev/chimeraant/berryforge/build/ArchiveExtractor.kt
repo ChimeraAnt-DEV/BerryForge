@@ -165,20 +165,16 @@ object ArchiveExtractor {
                 when {
                     entry.isDirectory -> target.mkdirs()
                     entry.isSymbolicLink -> {
-                        // Preserve links inside the tree (the JDK relies on them) but
-                        // refuse any link that would escape the destination.
-                        val linkTarget = entry.linkName
-                        if (linkTarget != null && !linkTarget.startsWith("/") && !linkTarget.contains("..")) {
-                            target.parentFile?.mkdirs()
-                            runCatching {
-                                if (!target.exists()) {
-                                    java.nio.file.Files.createSymbolicLink(
-                                        target.toPath(),
-                                        java.nio.file.Paths.get(linkTarget),
-                                    )
-                                }
-                            }
-                        }
+                        createSymlinkSafely(target, entry.linkName, destination)
+                    }
+                    entry.isLink -> {
+                        // A hard link is a second name for an existing file. Commons
+                        // compress reports it with isLink and a linkName pointing at the
+                        // first name; the previous version fell through to the file
+                        // branch and wrote a zero-byte file, which silently corrupted
+                        // anything hard-linked in the archive.
+                        copyHardLink(target, entry.linkName, destination, prefix)
+                        count++
                     }
                     else -> {
                         target.parentFile?.mkdirs()
@@ -203,6 +199,64 @@ object ArchiveExtractor {
             normalised.removePrefix(cleanPrefix)
         } else {
             null
+        }
+    }
+
+    /**
+     * Creates a symlink, but only if it resolves inside [destination].
+     *
+     * The previous rule rejected any link whose target contained "..", which also threw
+     * away legitimate relative links such as `../java.base/LICENSE` — the JDK contains
+     * over two hundred of those. The check is now a real containment test against the
+     * resolved path, so links that stay inside the tree are kept and links that escape it
+     * are dropped.
+     *
+     * A link pointing outside is skipped rather than followed, so a malicious archive
+     * cannot use one to write through to another location.
+     */
+    private fun createSymlinkSafely(target: File, linkName: String?, destination: File) {
+        if (linkName.isNullOrBlank()) return
+        // Absolute targets can never be verified as inside the destination.
+        if (linkName.startsWith("/")) return
+        target.parentFile?.mkdirs()
+        val resolved = runCatching {
+            File(target.parentFile, linkName).canonicalFile
+        }.getOrNull() ?: return
+
+        val root = runCatching { destination.canonicalPath }.getOrNull()
+        if (root != null) {
+            val resolvedPath = resolved.path
+            if (resolvedPath != root && !resolvedPath.startsWith(root + File.separator)) {
+                // Would escape the extraction root: skip it.
+                return
+            }
+        }
+        runCatching {
+            if (!target.exists()) {
+                java.nio.file.Files.createSymbolicLink(
+                    target.toPath(),
+                    java.nio.file.Paths.get(linkName),
+                )
+            }
+        }
+    }
+
+    /**
+     * Materialises a hard link as a copy of its target.
+     *
+     * Android's filesystem does not support creating hard links from an app, and the
+     * content is identical either way, so a copy is the correct fallback. If the target
+     * has not been extracted yet the entry is skipped rather than left as an empty file.
+     */
+    private fun copyHardLink(target: File, linkName: String?, destination: File, prefix: String?) {
+        if (linkName.isNullOrBlank()) return
+        val linkedName = stripPrefix(linkName, prefix) ?: return
+        val source = safeTarget(destination, linkedName) ?: return
+        if (!source.exists()) return
+        runCatching {
+            target.parentFile?.mkdirs()
+            source.copyTo(target, overwrite = true)
+            markExecutable(target, linkedName)
         }
     }
 

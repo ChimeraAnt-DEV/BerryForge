@@ -13,9 +13,17 @@ package dev.chimeraant.berryforge.build
  * own `/system/bin/linker64` for aarch64 and run in an app's private storage.
  *
  * The JDK is not a single archive: `openjdk-21` depends on native libraries
- * (libandroid-spawn, libiconv, zlib and others) that the JVM loads at runtime. The
- * dependency closure is resolved here at build time rather than at install time, so the
- * installer never has to run a package manager on the device.
+ * (libandroid-spawn, libiconv, zlib and others) that the JVM loads at runtime, and on
+ * `ca-certificates-java` for its trust store. The dependency closure is resolved here at
+ * build time rather than at install time, so the installer never has to run a package
+ * manager on the device.
+ *
+ * ## On version pinning
+ *
+ * These URLs point at specific published files, so they cannot break silently — but they
+ * also will not pick up security updates. When Termux rotates a package the filename
+ * changes and the download 404s with a clear error, which is the intended failure mode:
+ * loud, not silent. Regenerate this file to move to newer versions.
  */
 internal object ToolchainManifest {
 
@@ -26,13 +34,18 @@ internal object ToolchainManifest {
     const val TERMUX_DATA_PREFIX = "data/data/com.termux/files/usr/"
 
     /**
-     * JDK 21 plus its native runtime dependencies.
+     * JDK 21, its native runtime dependencies, and the CA trust store.
+     *
      * Audio and X11 packages in the closure are dropped: a headless build never
      * loads them, and they would add tens of megabytes for nothing.
      */
     val JDK_PACKAGES: List<TermuxPackage> = listOf(
         TermuxPackage("abseil-cpp", "pool/main/a/abseil-cpp/abseil-cpp_20260526.0_aarch64.deb", 1197740L,
             "e489fac652cddc39d9436141e627285f1034a545a06fbb19c420514a419ad877"),
+        TermuxPackage("ca-certificates", "pool/main/c/ca-certificates/ca-certificates_1:2026.09.25_all.deb", 105404L,
+            "57fab24bf4561bfdd35afe71bc1929914e51c35458cfd1fca2b15e54bc8df7af"),
+        TermuxPackage("ca-certificates-java", "pool/main/c/ca-certificates-java/ca-certificates-java_1:2026.09.25_all.deb", 96172L,
+            "9014d10657b5e8c6eb7f5b6245ee8924588f961c8a7ed8622ec2b81f7ce18f7c"),
         TermuxPackage("libandroid-execinfo", "pool/main/liba/libandroid-execinfo/libandroid-execinfo_0.1-3_aarch64.deb", 14964L,
             "725dd2c6da7fc96e860fcc928e18aa9fb0e85e0bdcaf4f8ce0f0654ca6860fc2"),
         TermuxPackage("libandroid-glob", "pool/main/liba/libandroid-glob/libandroid-glob_0.6-3_aarch64.deb", 7032L,
@@ -47,8 +60,8 @@ internal object ToolchainManifest {
             "f2f145d6135ad4843ac9670153be3e3944dc1e6f1736d46d2306c28f2b86f517"),
         TermuxPackage("libc++", "pool/main/libc/libc++/libc++_30_aarch64.deb", 341604L,
             "53d0b84a7ba7459024257cb94d5b136fe13ef858567f65a8064b35950799f2ca"),
-        TermuxPackage("libexpat", "pool/main/libe/libexpat/libexpat_2.8.5_aarch64.deb", 98900L,
-            "3b2c9b061fa890b69b88d2f5dd993efba902d678fe8e1990268892d1faf15e5e"),
+        TermuxPackage("libexpat", "pool/main/libe/libexpat/libexpat_2.9.0_aarch64.deb", 100256L,
+            "f8a104e8227c9c181f6818658a3ee2fa4c107fac94219b068144fc6591086cdb"),
         TermuxPackage("libiconv", "pool/main/libi/libiconv/libiconv_1.19_aarch64.deb", 562724L,
             "fe9481b1dc101c6c3552943f25435109fd522aecc615ae49594f9fbee863bb37"),
         TermuxPackage("openjdk-21", "pool/main/o/openjdk-21/openjdk-21_21.0.12_aarch64.deb", 106132164L,
