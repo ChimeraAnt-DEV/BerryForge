@@ -1,3 +1,4 @@
+import com.android.build.api.variant.impl.VariantOutputImpl
 import java.util.Properties
 
 plugins {
@@ -60,6 +61,27 @@ android {
 
     lint {
         abortOnError = false
+    }
+}
+
+/**
+ * Give every variant's APK a stable, product-facing filename.
+ *
+ * AGP's default is `<module>-<buildType>.apk` (app-debug.apk, app-release-unsigned.apk),
+ * which is an implementation detail that leaks into CI artefacts and release uploads.
+ * Pinning the name here means the build output is already called BerryForge.apk and no
+ * downstream step has to rename it.
+ *
+ * `outputFileName` is only exposed on the internal `VariantOutputImpl`, not on the
+ * public `VariantOutput` interface, so the output is cast. This is the documented
+ * approach for AGP 8; the old `applicationVariants.all { }` block is deprecated and
+ * does not see every output.
+ */
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            (output as? VariantOutputImpl)?.outputFileName?.set("BerryForge.apk")
+        }
     }
 }
 
