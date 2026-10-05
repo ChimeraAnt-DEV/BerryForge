@@ -99,6 +99,22 @@ class SandboxGuard(
             realTarget
         }
 
+    /**
+     * Maps a real workspace path into the sandbox scratch area, preserving the relative
+     * structure so a sandboxed session still looks like a working tree.
+     *
+     * This is what makes sandbox mode actually sandbox writes: the tool asks for the
+     * sandbox target instead of the real one, so the user's working copy is never touched
+     * while a session is sandboxed.
+     */
+    fun sandboxTargetFor(realTarget: File): File {
+        val relative = runCatching {
+            realTarget.absolutePath
+                .substringAfter("workspaces/", realTarget.name)
+        }.getOrDefault(realTarget.name)
+        return File(allowedRoot, relative).also { it.parentFile?.mkdirs() }
+    }
+
     /** Guards a raw path against traversal before it reaches the filesystem. */
     fun isPathSafe(root: File, candidate: File): Boolean {
         val rootPath = root.canonicalPath

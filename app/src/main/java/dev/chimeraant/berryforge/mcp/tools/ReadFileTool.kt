@@ -6,6 +6,7 @@ import dev.chimeraant.berryforge.data.github.RepoCache
 import dev.chimeraant.berryforge.mcp.Mcp
 import dev.chimeraant.berryforge.mcp.McpTool
 import dev.chimeraant.berryforge.mcp.McpToolException
+import dev.chimeraant.berryforge.mcp.McpValidation
 import dev.chimeraant.berryforge.mcp.Schema
 import dev.chimeraant.berryforge.mcp.args
 import dev.chimeraant.berryforge.mcp.bool
@@ -52,7 +53,7 @@ class ReadFileTool(
         val repo = args.requireStr("repo")
         val path = args.requireStr("path")
         val maxBytes = args.int("max_bytes", 200_000)
-        val (owner, name) = splitRepo(repo)
+        val (owner, name) = McpValidation.splitRepo(repo)
 
         val branch = args.str("branch")?.takeIf { it.isNotBlank() }
             ?: cache.getRepos("user", allowStale = true)
@@ -60,25 +61,25 @@ class ReadFileTool(
                 ?.defaultBranch
             ?: "HEAD"
 
-        validatePath(path)
+        val safePath = McpValidation.validatePath(path)
 
         // 1. Local mirror, if the file was already opened or written.
-        workspace.readLocal(owner, name, path)?.let { text ->
-            return respond(repo, path, branch, text, maxBytes, source = "local mirror")
+        workspace.readLocal(owner, name, safePath)?.let { text ->
+            return respond(repo, safePath, branch, text, maxBytes, source = "local mirror")
         }
 
         // 2. GitHub, then cache + mirror the result.
         val file = try {
-            api.readFile(owner, name, path, branch.takeIf { it != "HEAD" })
+            api.readFile(owner, name, safePath, branch.takeIf { it != "HEAD" })
         } catch (error: dev.chimeraant.berryforge.data.github.GitHubException) {
             throw McpToolException(
-                if (error.isNotFound) "No file at '$path' in $repo (branch $branch)."
-                else "GitHub returned ${error.code} reading $path: ${error.payload.take(200)}",
+                if (error.isNotFound) "No file at '$safePath' in $repo (branch $branch)."
+                else "GitHub returned ${error.code} reading $safePath: ${error.payload.take(200)}",
             )
         }
         workspace.storeFetched(owner, name, file)
-        cache.putFile(repo, branch, path, file.sha, file.text)
-        return respond(repo, path, branch, file.text, maxBytes, source = "github", sha = file.sha)
+        cache.putFile(repo, branch, safePath, file.sha, file.text)
+        return respond(repo, safePath, branch, file.text, maxBytes, source = "github", sha = file.sha)
     }
 
     private fun respond(
@@ -113,17 +114,5 @@ class ReadFileTool(
         )
     }
 
-    private fun splitRepo(repo: String): Pair<String, String> {
-        val parts = repo.trim().removePrefix("https://github.com/").split('/')
-        if (parts.size < 2 || parts[0].isBlank() || parts[1].isBlank()) {
-            throw McpToolException("'repo' must be in owner/name form, got '$repo'.")
-        }
-        return parts[0] to parts[1].removeSuffix(".git")
-    }
 
-    private fun validatePath(path: String) {
-        if (path.startsWith("/") || path.contains("..") || path.contains('\u0000')) {
-            throw McpToolException("Path '$path' is not a safe repo-relative path.")
-        }
-    }
 }

@@ -5,6 +5,7 @@ import dev.chimeraant.berryforge.data.github.CommitFlow
 import dev.chimeraant.berryforge.mcp.Mcp
 import dev.chimeraant.berryforge.mcp.McpTool
 import dev.chimeraant.berryforge.mcp.McpToolException
+import dev.chimeraant.berryforge.mcp.McpValidation
 import dev.chimeraant.berryforge.mcp.Schema
 import dev.chimeraant.berryforge.mcp.args
 import dev.chimeraant.berryforge.mcp.bool
@@ -64,7 +65,7 @@ class CommitTool(
             ?.filter { it.isNotBlank() }
             ?.takeIf { it.isNotEmpty() }
 
-        val (owner, name) = splitRepo(repo)
+        val (owner, name) = McpValidation.splitRepo(repo)
 
         val outcome = flow.commit(
             owner = owner,
@@ -113,9 +114,4 @@ class CommitTool(
         )
     }
 
-    private fun splitRepo(repo: String): Pair<String, String> {
-        val parts = repo.trim().removePrefix("https://github.com/").split('/')
-        if (parts.size < 2) throw McpToolException("'repo' must be in owner/name form, got '$repo'.")
-        return parts[0] to parts[1].removeSuffix(".git")
-    }
 }

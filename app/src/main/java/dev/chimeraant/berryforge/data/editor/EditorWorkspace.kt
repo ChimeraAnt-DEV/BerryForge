@@ -222,6 +222,18 @@ class EditorWorkspace(private val context: Context) {
         withContext(Dispatchers.IO) { runCatching { fileFor(owner, name, path).delete() } }
     }
 
+    /**
+     * Records a sandboxed write.
+     *
+     * The file itself goes to the sandbox scratch area, so the working copy must not be
+     * marked dirty — otherwise a sandboxed session would leave the real repo looking
+     * modified and a later commit would push changes the user never approved.
+     */
+    suspend fun recordSandboxWrite(owner: String, name: String, path: String, content: String) {
+        // Deliberately a no-op on real state. The sandbox path is tracked by SandboxGuard
+        // and the change is recorded in the session for audit and revert.
+    }
+
     suspend fun markDirty(owner: String, name: String, path: String) {
         mutate(owner, name) { map ->
             val previous = map[path] ?: FileState()

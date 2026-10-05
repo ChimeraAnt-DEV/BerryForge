@@ -9,6 +9,7 @@ import dev.chimeraant.berryforge.data.editor.EditorWorkspace
 import dev.chimeraant.berryforge.mcp.Mcp
 import dev.chimeraant.berryforge.mcp.McpTool
 import dev.chimeraant.berryforge.mcp.McpToolException
+import dev.chimeraant.berryforge.mcp.McpValidation
 import dev.chimeraant.berryforge.mcp.Schema
 import dev.chimeraant.berryforge.mcp.args
 import dev.chimeraant.berryforge.mcp.bool
@@ -57,7 +58,7 @@ class RunTestsTool(
         val repo = args.requireStr("repo")
         val taskName = args.str("task") ?: "test"
         val maxLines = args.int("max_log_lines", 120).coerceIn(20, 1000)
-        val (owner, name) = splitRepo(repo)
+        val (owner, name) = McpValidation.splitRepo(repo)
 
         val projectDir = workspace.repoDir(owner, name)
         if (!gradle.hasGradleProject(projectDir)) {
@@ -113,9 +114,4 @@ class RunTestsTool(
         )
     }
 
-    private fun splitRepo(repo: String): Pair<String, String> {
-        val parts = repo.trim().removePrefix("https://github.com/").split('/')
-        if (parts.size < 2) throw McpToolException("'repo' must be in owner/name form, got '$repo'.")
-        return parts[0] to parts[1].removeSuffix(".git")
-    }
 }
