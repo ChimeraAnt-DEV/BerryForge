@@ -1,3 +1,9 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ChimeraAnt-DEV/BerryForge-ICON/main/berryforge-icon-512.png" width="150" height="150" alt="BerryForge">
+</p>
+
+
+
 # BerryForge
 
 An Android IDE that builds, reviews and ships — on the device.
