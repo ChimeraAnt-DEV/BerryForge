@@ -331,7 +331,7 @@ private fun EditorHeader(
         Modifier
             .fillMaxWidth()
             .background(BerryColors.Surface1)
-            .statusBarsPaddingCompat(),
+            .statusBarsPadding(),
     ) {
         Row(
             Modifier
@@ -381,7 +381,6 @@ private fun EditorHeader(
     }
 }
 
-private fun Modifier.statusBarsPaddingCompat(): Modifier = this.then(statusBarsPadding())
 
 @Composable
 private fun FindingsRail(

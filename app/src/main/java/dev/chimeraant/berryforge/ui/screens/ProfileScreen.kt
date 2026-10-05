@@ -100,7 +100,7 @@ fun ProfileScreen(
             Modifier
                 .fillMaxWidth()
                 .background(BerryColors.Surface1)
-                .statusBarsPaddingCompat()
+                .statusBarsPadding()
                 .padding(horizontal = BerrySpacing.sm, vertical = BerrySpacing.sm),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -253,8 +253,6 @@ fun ProfileScreen(
     }
 }
 
-private fun Modifier.statusBarsPaddingCompat(): Modifier =
-    this.then(statusBarsPadding())
 
 @Composable
 private fun OwnerNotice() {
