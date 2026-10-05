@@ -2,6 +2,8 @@ package dev.chimeraant.berryforge.ui.screens
 
 import android.content.Intent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -150,14 +153,16 @@ fun SettingsScreen(
                 mono = true,
             )
             Spacer(Modifier.height(BerrySpacing.md))
-            BerryTextField(
-                value = llmModel,
-                onValueChange = { llmModel = it },
-                label = "Model",
-                placeholder = SettingsStore.DEFAULT_LLM_MODEL,
-                icon = BerryIcons.Robot,
-                modifier = Modifier.fillMaxWidth(),
-                mono = true,
+            ModelPicker(
+                current = llmModel,
+                onSelect = {
+                    llmModel = it
+                    scope.launch {
+                        viewModel.settings.setLlmModel(it)
+                        viewModel.toast("Model set to $it.")
+                    }
+                },
+                loadModels = { viewModel.aiReview.listModels() },
             )
             Spacer(Modifier.height(BerrySpacing.md))
             BerryTextField(
@@ -615,6 +620,151 @@ fun SettingsScreen(
                 color = BerryColors.TextDisabled,
             )
             Spacer(Modifier.height(BerrySpacing.xxl))
+        }
+    }
+}
+
+/**
+ * Model chooser.
+ *
+ * Populates from the configured endpoint's `GET /models`. Many OpenAI-compatible
+ * endpoints do not implement that route, so the free-text field is always available as
+ * a fallback rather than the user being stuck when the fetch fails.
+ */
+@Composable
+private fun ModelPicker(
+    current: String,
+    onSelect: (String) -> Unit,
+    loadModels: suspend () -> Result<List<String>>,
+) {
+    val scope = rememberCoroutineScope()
+    var models by remember { mutableStateOf<List<String>>(emptyList()) }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var expanded by remember { mutableStateOf(false) }
+    var manual by remember { mutableStateOf(false) }
+    var draft by remember(current) { mutableStateOf(current) }
+
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("MODEL", style = BerryType.Overline, color = BerryColors.TextTertiary)
+            Spacer(Modifier.weight(1f))
+            BerryButton(
+                text = if (loading) "Loading…" else "Refresh list",
+                onClick = {
+                    loading = true
+                    error = null
+                    scope.launch {
+                        loadModels()
+                            .onSuccess { models = it; expanded = true; manual = false }
+                            .onFailure { error = it.message ?: "Could not list models."; manual = true }
+                        loading = false
+                    }
+                },
+                variant = BerryButtonVariant.Ghost,
+                size = BerryButtonSize.Sm,
+                icon = BerryIcons.Refresh,
+                enabled = !loading,
+            )
+            BerryButton(
+                text = if (manual) "Use list" else "Type it",
+                onClick = { manual = !manual },
+                variant = BerryButtonVariant.Ghost,
+                size = BerryButtonSize.Sm,
+            )
+        }
+        Spacer(Modifier.height(BerrySpacing.sm))
+
+        if (manual || models.isEmpty()) {
+            // Free-text fallback, also the default until a list has been fetched.
+            BerryTextField(
+                value = draft,
+                onValueChange = {
+                    draft = it
+                    onSelect(it)
+                },
+                placeholder = SettingsStore.DEFAULT_LLM_MODEL,
+                icon = BerryIcons.Robot,
+                modifier = Modifier.fillMaxWidth(),
+                mono = true,
+                helper = error
+                    ?: "The endpoint did not advertise its models. Enter the model name directly.",
+            )
+        } else {
+            // Dropdown of what the endpoint actually offers.
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(BerryRadius.md))
+                    .background(BerryColors.Surface2)
+                    .border(BerrySize.hairline, BerryColors.Outline, RoundedCornerShape(BerryRadius.md)),
+            ) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { expanded = !expanded }
+                        .padding(BerrySpacing.md),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BerryIcon(BerryIcons.Robot, null, size = BerrySize.iconSm, tint = BerryColors.Ai)
+                    Spacer(Modifier.width(BerrySpacing.sm))
+                    Text(
+                        current.ifBlank { "Choose a model" },
+                        style = BerryType.CodeSmall,
+                        color = BerryColors.TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text("${models.size}", style = BerryType.Micro, color = BerryColors.TextDisabled)
+                    Spacer(Modifier.width(BerrySpacing.sm))
+                    BerryIcon(
+                        if (expanded) BerryIcons.ChevronUp else BerryIcons.ChevronDown,
+                        null,
+                        size = BerrySize.iconSm,
+                        tint = BerryColors.TextTertiary,
+                    )
+                }
+                AnimatedVisibility(visible = expanded) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 260.dp)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        BerryDivider()
+                        models.forEach { id ->
+                            val selected = id == current
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .background(
+                                        if (selected) BerryColors.Ai.copy(alpha = 0.12f)
+                                        else androidx.compose.ui.graphics.Color.Transparent,
+                                    )
+                                    .clickable {
+                                        onSelect(id)
+                                        expanded = false
+                                    }
+                                    .padding(horizontal = BerrySpacing.md, vertical = BerrySpacing.sm),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    id,
+                                    style = BerryType.CodeSmall,
+                                    color = if (selected) BerryColors.Ai else BerryColors.TextSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                if (selected) {
+                                    BerryIcon(BerryIcons.Check, null, size = 13.dp, tint = BerryColors.Ai)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

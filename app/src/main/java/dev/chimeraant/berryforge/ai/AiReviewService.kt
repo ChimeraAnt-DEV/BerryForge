@@ -69,6 +69,45 @@ class AiReviewService(
     /** Returns null when no key has been configured, so callers can prompt. */
     fun hasKey(): Boolean = !secure.llmApiKey.isNullOrBlank()
 
+    /**
+     * Fetches the model ids the configured endpoint advertises.
+     *
+     * OpenAI-compatible endpoints expose `GET /models` returning `{"data":[{"id":...}]}`.
+     * Not every endpoint implements it, so a failure here is expected and non-fatal: the
+     * UI falls back to free-text entry rather than blocking the user.
+     */
+    suspend fun listModels(): Result<List<String>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val base = endpoint()
+            val apiKey = secure.llmApiKey?.takeIf { it.isNotBlank() }
+            val request = Request.Builder()
+                .url("$base/models")
+                .apply { if (apiKey != null) header("Authorization", "Bearer $apiKey") }
+                .header("Accept", "application/json")
+                .get()
+                .build()
+
+            Http.client.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    error("The endpoint returned ${response.code} for /models.")
+                }
+                val root = json.parseToJsonElement(body).jsonObject
+                val ids = root["data"]?.jsonArray
+                    ?.mapNotNull { element ->
+                        runCatching {
+                            element.jsonObject["id"]?.jsonPrimitive?.content
+                        }.getOrNull()
+                    }
+                    ?.filter { it.isNotBlank() }
+                    ?.sorted()
+                    ?: emptyList()
+                if (ids.isEmpty()) error("The endpoint returned no models.")
+                ids
+            }
+        }
+    }
+
     suspend fun endpoint(): String = settings.llmEndpoint.first().trimEnd('/')
 
     suspend fun model(): String = settings.llmModel.first()
