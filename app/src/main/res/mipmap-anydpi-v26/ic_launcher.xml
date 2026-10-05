@@ -1,6 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive launcher icon (API 26+).
+
+  The foreground is a raster of the real crystal glyph rather than a traced vector:
+  the artwork has fine facets and highlights that a hand-traced path would lose, and
+  raster layers are fully supported here.
+
+  The background is a flat vector in the exact colour sampled from the supplied
+  artwork (#0C111F), so the icon matches the source without carrying a redundant
+  full-bleed raster for every density.
+-->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/berry_ink" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
 </adaptive-icon>

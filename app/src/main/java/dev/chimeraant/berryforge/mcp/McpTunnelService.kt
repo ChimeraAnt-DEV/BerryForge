@@ -101,7 +101,7 @@ class McpTunnelService : Service() {
         val text = publicUrl ?: "Waiting for the tunnel to come up…"
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_berryforge)
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(
