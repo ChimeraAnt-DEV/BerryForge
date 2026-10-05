@@ -2,6 +2,9 @@ package dev.chimeraant.berryforge.core
 
 import android.content.Context
 import dev.chimeraant.berryforge.ai.AiReviewService
+import dev.chimeraant.berryforge.build.BuildLogParser
+import dev.chimeraant.berryforge.build.GradleRunner
+import dev.chimeraant.berryforge.build.ToolchainInstaller
 import dev.chimeraant.berryforge.data.editor.EditorWorkspace
 import dev.chimeraant.berryforge.data.github.CommitFlow
 import dev.chimeraant.berryforge.data.github.GitHubApi
@@ -31,4 +34,8 @@ class AppContainer(private val context: Context) {
     val commitFlow: CommitFlow by lazy { CommitFlow(api, workspace, sandbox) }
 
     val aiReview: AiReviewService by lazy { AiReviewService(settings, secure) }
+
+    val toolchain: ToolchainInstaller by lazy { ToolchainInstaller(context) }
+    val gradle: GradleRunner by lazy { GradleRunner(context, toolchain) }
+    val buildLogs: BuildLogParser by lazy { BuildLogParser() }
 }

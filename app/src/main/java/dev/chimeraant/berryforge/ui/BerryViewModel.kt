@@ -79,7 +79,15 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
     private val _toast = MutableStateFlow<String?>(null)
     val toast: StateFlow<String?> = _toast.asStateFlow()
 
+    private val _toolchainReady = MutableStateFlow(false)
+    val toolchainReady: StateFlow<Boolean> = _toolchainReady.asStateFlow()
+
+    private val _onboardingDone = MutableStateFlow(false)
+    val onboardingDone: StateFlow<Boolean> = _onboardingDone.asStateFlow()
+
     val commitFlow get() = container.commitFlow
+    val gradle get() = container.gradle
+    val toolchain get() = container.toolchain
     val api get() = container.api
     val repoCache get() = container.repoCache
     val settings get() = container.settings
@@ -88,6 +96,12 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
     val workspace get() = container.workspace
 
     init {
+        viewModelScope.launch {
+            container.settings.onboardingDone.collect { _onboardingDone.value = it }
+        }
+        viewModelScope.launch {
+            container.settings.toolchainReady.collect { _toolchainReady.value = it }
+        }
         viewModelScope.launch { restoreSession() }
     }
 
@@ -343,6 +357,48 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
         _signedIn.value = false
         _signIn.value = SignInState.Idle
         startSignIn()
+    }
+
+    fun markOnboardingDone() {
+        viewModelScope.launch { container.settings.setOnboardingDone(true) }
+    }
+
+    /** Hands a built APK to the platform installer via the app's FileProvider. */
+    fun installApk(apk: java.io.File) {
+        runCatching {
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                container.appContext,
+                "${container.appContext.packageName}.fileprovider",
+                apk,
+            )
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            container.appContext.startActivity(intent)
+        }.onFailure { toast(it.message ?: "Could not open the installer.") }
+    }
+
+    /** Shares a built APK through the system share sheet. */
+    fun shareApk(apk: java.io.File) {
+        runCatching {
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                container.appContext,
+                "${container.appContext.packageName}.fileprovider",
+                apk,
+            )
+            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "application/vnd.android.package-archive"
+                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            container.appContext.startActivity(
+                android.content.Intent.createChooser(intent, "Share APK").apply {
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                },
+            )
+        }.onFailure { toast(it.message ?: "Could not share the APK.") }
     }
 
     /** Exposes the toast as composable state for the snackbar. */

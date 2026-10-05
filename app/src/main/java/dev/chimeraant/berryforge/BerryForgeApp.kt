@@ -13,6 +13,17 @@ class BerryForgeApp : Application() {
         instance = this
     }
 
+    /**
+     * Called by the install-result receiver. Phase 2 only logs; Phase 4 wires this into
+     * the agent session recorder so installs appear in the audit trail.
+     */
+    fun recordInstallOutcome(packageName: String, succeeded: Boolean) {
+        android.util.Log.i(
+            "BerryForgeApp",
+            "Install outcome for $packageName: succeeded=$succeeded",
+        )
+    }
+
     companion object {
         lateinit var instance: BerryForgeApp
             private set

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,7 +25,9 @@ import dev.chimeraant.berryforge.ui.components.BerryEmptyState
 import dev.chimeraant.berryforge.ui.components.BerrySnackbar
 import dev.chimeraant.berryforge.ui.design.BerryColors
 import dev.chimeraant.berryforge.ui.design.BerryIcons
+import dev.chimeraant.berryforge.ui.screens.BuildScreen
 import dev.chimeraant.berryforge.ui.screens.EditorScreen
+import dev.chimeraant.berryforge.ui.screens.ToolchainWizardScreen
 import dev.chimeraant.berryforge.ui.screens.FileTreeScreen
 import dev.chimeraant.berryforge.ui.screens.ReposScreen
 import dev.chimeraant.berryforge.ui.screens.SignInScreen
@@ -42,6 +45,14 @@ fun BerryApp(viewModel: BerryViewModel) {
 
     var destination by remember { mutableStateOf(Destination.Repos) }
     var openFilePath by remember { mutableStateOf<String?>(null) }
+    var showWizard by remember { mutableStateOf(false) }
+    var jumpToLine by remember { mutableStateOf<Int?>(null) }
+    val onboardingDone by viewModel.onboardingDone.collectAsStateWithLifecycle()
+    val toolchainReady by viewModel.toolchainReady.collectAsStateWithLifecycle()
+
+    LaunchedEffect(signedIn, onboardingDone, toolchainReady) {
+        if (signedIn && !onboardingDone && !toolchainReady) showWizard = true
+    }
 
     Box(Modifier.fillMaxSize().background(BerryColors.Base)) {
         when {
@@ -87,11 +98,13 @@ fun BerryApp(viewModel: BerryViewModel) {
                                 }
                             }
 
-                            dest == Destination.Build -> BerryEmptyState(
-                                icon = BerryIcons.Hammer,
-                                title = "Build",
-                                body = "The on-device toolchain and build log arrive in Phase 2.",
-                                modifier = Modifier.fillMaxSize(),
+                            dest == Destination.Build -> BuildScreen(
+                                viewModel = viewModel,
+                                onOpenFileAtLine = { path, line ->
+                                    jumpToLine = line
+                                    openFilePath = path
+                                },
+                                onProfileClick = { destination = Destination.Settings },
                             )
 
                             dest == Destination.Editor -> {
