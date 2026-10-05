@@ -70,6 +70,7 @@ fun ProfileScreen(
     viewModel: BerryViewModel,
     onOpenRepo: (GhRepo) -> Unit,
     onOpenSettings: () -> Unit,
+    onManageAccounts: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -222,6 +223,14 @@ fun ProfileScreen(
 
             // ---- Actions ----
             Column(Modifier.padding(horizontal = BerrySpacing.lg)) {
+                BerryButton(
+                    text = "Manage accounts",
+                    onClick = onManageAccounts,
+                    icon = BerryIcons.User,
+                    fillWidth = true,
+                    variant = BerryButtonVariant.Secondary,
+                )
+                Spacer(Modifier.height(BerrySpacing.sm))
                 BerryButton(
                     text = "Settings",
                     onClick = onOpenSettings,

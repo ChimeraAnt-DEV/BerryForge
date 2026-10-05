@@ -29,6 +29,7 @@ import dev.chimeraant.berryforge.ui.design.BerryIcons
 import dev.chimeraant.berryforge.ui.screens.BuildScreen
 import dev.chimeraant.berryforge.ui.screens.AgentScreen
 import dev.chimeraant.berryforge.ui.screens.EditorScreen
+import dev.chimeraant.berryforge.ui.screens.ManageAccountsScreen
 import dev.chimeraant.berryforge.ui.screens.ProfileScreen
 import dev.chimeraant.berryforge.ui.screens.TerminalScreen
 import dev.chimeraant.berryforge.ui.screens.SettingsScreen
@@ -52,6 +53,7 @@ fun BerryApp(viewModel: BerryViewModel) {
     var openFilePath by remember { mutableStateOf<String?>(null) }
     var showWizard by remember { mutableStateOf(false) }
     var showProfile by remember { mutableStateOf(false) }
+    var showAccounts by remember { mutableStateOf(false) }
     var jumpToLine by remember { mutableStateOf<Int?>(null) }
     val onboardingDone by viewModel.onboardingDone.collectAsStateWithLifecycle()
     val toolchainReady by viewModel.toolchainReady.collectAsStateWithLifecycle()
@@ -146,6 +148,7 @@ fun BerryApp(viewModel: BerryViewModel) {
                                 viewModel = viewModel,
                                 onOpenWizard = { showWizard = true },
                                 onProfileClick = { showProfile = true },
+                                onManageAccounts = { showAccounts = true },
                             )
 
                             else -> BerryEmptyState(

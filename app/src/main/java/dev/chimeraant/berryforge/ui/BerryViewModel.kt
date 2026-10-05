@@ -203,6 +203,53 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    val accounts: List<String> get() = container.auth.accounts
+
+    /**
+     * Signs out of a single account, leaving the others intact.
+     *
+     * If the removed account was the active one, the session falls back to whichever
+     * account remains; if none remain, the app returns to the sign-in screen. Removing an
+     * account that was *not* active changes nothing, so it must not trigger a reload —
+     * hence capturing the active login before the removal rather than comparing after.
+     */
+    fun signOutAccount(login: String) {
+        viewModelScope.launch {
+            val wasActive = container.secure.activeLogin == login
+
+            val token = container.secure.tokenFor(login)
+            if (token != null) runCatching { container.auth.revoke(token) }
+            container.auth.signOut(login)
+
+            val remaining = container.auth.accounts
+            val nowActive = container.secure.activeLogin
+
+            when {
+                remaining.isEmpty() || nowActive == null -> {
+                    _signedIn.value = false
+                    _user.value = null
+                    _isOwner.value = false
+                    _orgs.value = emptyList()
+                    _repos.value = emptyList()
+                    _openRepo.value = null
+                    _tree.value = null
+                }
+                // Only the active account being removed changes the session.
+                wasActive -> switchAccount(nowActive)
+                else -> Unit
+            }
+        }
+    }
+
+    /** Cached profile for an account, so the accounts screen can show an avatar. */
+    suspend fun cachedProfile(login: String): dev.chimeraant.berryforge.data.github.GhUser? =
+        container.repoCache.getProfile(login)
+
+    /** Starts the device flow again to add another account without dropping the current one. */
+    fun addAccount() {
+        startSignIn()
+    }
+
     fun switchAccount(login: String) {
         container.auth.switchTo(login)
         viewModelScope.launch {
@@ -212,8 +259,6 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
             fetchProfile()
         }
     }
-
-    val accounts: List<String> get() = container.auth.accounts
 
     // ---- Profile / owner badge ----
 

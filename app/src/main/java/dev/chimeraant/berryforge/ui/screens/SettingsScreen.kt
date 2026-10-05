@@ -75,6 +75,7 @@ fun SettingsScreen(
     viewModel: BerryViewModel,
     onOpenWizard: () -> Unit,
     onProfileClick: () -> Unit,
+    onManageAccounts: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -571,42 +572,46 @@ fun SettingsScreen(
 
             // ================= Account =================
             Section("Account", BerryIcons.User, BerryColors.Edit)
-            if (viewModel.accounts.size > 1) {
-                viewModel.accounts.forEach { login ->
-                    val active = login == viewModel.secure.activeLogin
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(BerryRadius.md))
-                            .background(if (active) BerryColors.Edit.copy(alpha = 0.10f) else BerryColors.Surface2)
-                            .clickable { viewModel.switchAccount(login) }
-                            .padding(BerrySpacing.md),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        BerryIcon(
-                            if (active) BerryIcons.CheckCircle else BerryIcons.User,
-                            null,
-                            size = BerrySize.iconSm,
-                            tint = if (active) BerryColors.Edit else BerryColors.TextTertiary,
-                        )
-                        Spacer(Modifier.width(BerrySpacing.md))
-                        Text(login, style = BerryType.Body, color = BerryColors.TextPrimary, modifier = Modifier.weight(1f))
-                        if (active) BerryChip("active", color = BerryColors.Edit)
-                    }
-                    Spacer(Modifier.height(BerrySpacing.xs))
+            viewModel.accounts.forEach { login ->
+                val active = login == viewModel.secure.activeLogin
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(BerryRadius.md))
+                        .background(if (active) BerryColors.Edit.copy(alpha = 0.10f) else BerryColors.Surface2)
+                        .padding(BerrySpacing.md),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BerryIcon(
+                        if (active) BerryIcons.CheckCircle else BerryIcons.User,
+                        null,
+                        size = BerrySize.iconSm,
+                        tint = if (active) BerryColors.Edit else BerryColors.TextTertiary,
+                    )
+                    Spacer(Modifier.width(BerrySpacing.md))
+                    Text(
+                        login,
+                        style = BerryType.Body,
+                        color = BerryColors.TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (active) BerryChip("active", color = BerryColors.Edit)
                 }
-                Spacer(Modifier.height(BerrySpacing.sm))
+                Spacer(Modifier.height(BerrySpacing.xs))
             }
+            Spacer(Modifier.height(BerrySpacing.sm))
             BerryButton(
-                text = "Add another account",
-                onClick = { viewModel.signOutAndRestartSignIn() },
+                text = "Manage accounts",
+                onClick = onManageAccounts,
                 variant = BerryButtonVariant.Secondary,
-                icon = BerryIcons.Plus,
+                icon = BerryIcons.User,
                 fillWidth = true,
             )
             Spacer(Modifier.height(BerrySpacing.sm))
             BerryButton(
-                text = "Sign out",
+                text = "Sign out of everything",
                 onClick = { viewModel.signOut() },
                 variant = BerryButtonVariant.Danger,
                 icon = BerryIcons.Close,
