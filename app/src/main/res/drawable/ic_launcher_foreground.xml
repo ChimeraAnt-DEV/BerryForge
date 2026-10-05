@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Berry body: faceted hexagon crystal -->
+    <path
+        android:pathData="M54,26 L74,37 L74,59 L54,70 L34,59 L34,37 Z"
+        android:fillColor="#4C8DFF" />
+    <path
+        android:pathData="M54,26 L74,37 L54,48 L34,37 Z"
+        android:fillColor="#6FA8FF" />
+    <path
+        android:pathData="M54,48 L74,37 L74,59 L54,70 Z"
+        android:fillColor="#3B6FD4" />
+    <path
+        android:pathData="M54,48 L34,37 L34,59 L54,70 Z"
+        android:fillColor="#2E5CB8" />
+    <!-- Forge spark -->
+    <path
+        android:pathData="M54,74 L57,81 L64,84 L57,87 L54,94 L51,87 L44,84 L51,81 Z"
+        android:fillColor="#8B5CF6" />
+</vector>

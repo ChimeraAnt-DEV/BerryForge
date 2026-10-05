@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <files-path name="internal_files" path="." />
+    <files-path name="toolchains" path="toolchains/" />
+    <files-path name="workspaces" path="workspaces/" />
+    <files-path name="builds" path="builds/" />
+    <cache-path name="cache" path="." />
+    <external-files-path name="ext_files" path="." />
+</paths>
