@@ -8,6 +8,13 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.chimeraant.berryforge.ui.BerryViewModel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,6 +28,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,14 +63,16 @@ import dev.chimeraant.berryforge.ui.design.BerryType
 @Composable
 fun BerryTopBar(
     title: String,
+    viewModel: BerryViewModel,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
     leading: (@Composable () -> Unit)? = null,
-    user: GhUser?,
-    isOwner: Boolean,
-    onProfileClick: () -> Unit,
+    onProfileClick: () -> Unit = {},
+    onManageAccounts: () -> Unit = {},
     actions: (@Composable () -> Unit)? = null,
 ) {
+    val user by viewModel.user.collectAsStateWithLifecycle()
+    val isOwner by viewModel.isOwner.collectAsStateWithLifecycle()
     Column(
         modifier
             .fillMaxWidth()
@@ -106,7 +116,11 @@ fun BerryTopBar(
                 actions()
                 Box(Modifier.size(BerrySpacing.xs))
             }
-            ProfileChip(user = user, isOwner = isOwner, onClick = onProfileClick)
+            ProfileChip(
+                viewModel = viewModel,
+                onOpenProfile = onProfileClick,
+                onManageAccounts = onManageAccounts,
+            )
         }
         BerryDivider(strong = true)
     }
@@ -115,11 +129,94 @@ fun BerryTopBar(
 /**
  * Avatar + handle in a pill, with the owner crown when applicable.
  *
- * The crown is purely a client-side decoration derived from org membership; the chip
- * tooltip says so, and nothing in the app treats it as authorisation.
+ * Tapping opens an account menu listing every signed-in account, with switch, per-account
+ * sign-out and an add-account action. Previously this only fired a callback that opened
+ * the profile screen, so there was no way to reach account management from the chip.
+ *
+ * The menu is self-contained: it resolves the account list from the view model, so every
+ * screen that renders the top bar gets the behaviour without each one having to thread
+ * callbacks through.
  */
 @Composable
 fun ProfileChip(
+    viewModel: BerryViewModel,
+    modifier: Modifier = Modifier,
+    onOpenProfile: () -> Unit = {},
+    onManageAccounts: () -> Unit = {},
+) {
+    val user by viewModel.user.collectAsStateWithLifecycle()
+    val isOwner by viewModel.isOwner.collectAsStateWithLifecycle()
+    val accounts = viewModel.accounts
+    val activeLogin = viewModel.secure.activeLogin
+    var menuOpen by remember { mutableStateOf(false) }
+    var confirmSignOut by remember { mutableStateOf<String?>(null) }
+
+    Box(modifier) {
+        ProfileChipSurface(
+            user = user,
+            isOwner = isOwner,
+            onClick = { menuOpen = true },
+        )
+
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            modifier = Modifier
+                .widthIn(min = 260.dp, max = 300.dp)
+                .background(BerryColors.Surface2, RoundedCornerShape(BerryRadius.md))
+                .border(
+                    BerrySize.hairline,
+                    BerryColors.OutlineStrong,
+                    RoundedCornerShape(BerryRadius.md),
+                ),
+        ) {
+            AccountMenuContent(
+                user = user,
+                isOwner = isOwner,
+                accounts = accounts,
+                activeLogin = activeLogin,
+                onSwitch = { login ->
+                    viewModel.switchAccount(login)
+                    menuOpen = false
+                },
+                onSignOut = { login ->
+                    confirmSignOut = login
+                    menuOpen = false
+                },
+                onOpenProfile = {
+                    menuOpen = false
+                    onOpenProfile()
+                },
+                onManageAccounts = {
+                    menuOpen = false
+                    onManageAccounts()
+                },
+                onAddAccount = {
+                    menuOpen = false
+                    viewModel.addAccount()
+                },
+            )
+        }
+    }
+
+    confirmSignOut?.let { login ->
+        BerryDialog(
+            visible = true,
+            onDismiss = { confirmSignOut = null },
+            title = "Sign out of $login?",
+            message = "Only this account is removed. Any other signed-in accounts stay as they are.",
+            icon = BerryIcons.Close,
+            accent = BerryColors.Danger,
+            confirmLabel = "Sign out",
+            destructive = true,
+            onConfirm = { viewModel.signOutAccount(login) },
+        )
+    }
+}
+
+/** The pill itself, without the menu. */
+@Composable
+private fun ProfileChipSurface(
     user: GhUser?,
     isOwner: Boolean,
     onClick: () -> Unit,
@@ -161,6 +258,140 @@ fun ProfileChip(
             )
         }
         if (isOwner) OwnerBadge(compact = true)
+        BerryIcon(
+            BerryIcons.ChevronDown,
+            "Account menu",
+            size = 12.dp,
+            tint = BerryColors.TextTertiary,
+        )
+    }
+}
+
+/** Contents of the account menu: identity, account list, and actions. */
+@Composable
+private fun AccountMenuContent(
+    user: GhUser?,
+    isOwner: Boolean,
+    accounts: List<String>,
+    activeLogin: String?,
+    onSwitch: (String) -> Unit,
+    onSignOut: (String) -> Unit,
+    onOpenProfile: () -> Unit,
+    onManageAccounts: () -> Unit,
+    onAddAccount: () -> Unit,
+) {
+    Column(Modifier.padding(vertical = BerrySpacing.xs)) {
+        // ---- Current identity ----
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpenProfile)
+                .padding(horizontal = BerrySpacing.md, vertical = BerrySpacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Avatar(user = user, size = BerrySize.avatar, isOwner = isOwner)
+            Spacer(Modifier.width(BerrySpacing.md))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        user?.displayName ?: "Not signed in",
+                        style = BerryType.BodyStrong,
+                        color = BerryColors.TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (isOwner) {
+                        Spacer(Modifier.width(BerrySpacing.xs))
+                        OwnerBadge(compact = true)
+                    }
+                }
+                Text(
+                    "@${user?.login ?: "—"}",
+                    style = BerryType.Caption,
+                    color = BerryColors.TextTertiary,
+                )
+            }
+            BerryIcon(BerryIcons.ArrowRight, null, size = 13.dp, tint = BerryColors.TextDisabled)
+        }
+
+        BerryDivider()
+
+        // ---- Signed-in accounts ----
+        if (accounts.size > 1) {
+            Text(
+                "SIGNED IN",
+                style = BerryType.Overline,
+                color = BerryColors.TextTertiary,
+                modifier = Modifier.padding(
+                    start = BerrySpacing.md,
+                    top = BerrySpacing.sm,
+                    bottom = BerrySpacing.xxs,
+                ),
+            )
+            accounts.forEach { login ->
+                val isActive = login == activeLogin
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !isActive) { onSwitch(login) }
+                        .padding(horizontal = BerrySpacing.md, vertical = BerrySpacing.sm),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BerryIcon(
+                        if (isActive) BerryIcons.CheckCircle else BerryIcons.User,
+                        null,
+                        size = BerrySize.iconSm,
+                        tint = if (isActive) BerryColors.Edit else BerryColors.TextTertiary,
+                    )
+                    Spacer(Modifier.width(BerrySpacing.sm))
+                    Text(
+                        login,
+                        style = BerryType.BodySmall,
+                        color = if (isActive) BerryColors.TextPrimary else BerryColors.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (isActive) {
+                        Text("active", style = BerryType.Micro, color = BerryColors.Edit)
+                    } else {
+                        BerryIconButton(
+                            BerryIcons.Close,
+                            "Sign out of $login",
+                            onClick = { onSignOut(login) },
+                            tint = BerryColors.TextTertiary,
+                            containerSize = 26.dp,
+                            size = 13.dp,
+                        )
+                    }
+                }
+            }
+            BerryDivider()
+        }
+
+        // ---- Actions ----
+        MenuAction(BerryIcons.Plus, "Add account", onAddAccount)
+        MenuAction(BerryIcons.User, "Manage accounts", onManageAccounts)
+        MenuAction(BerryIcons.Settings, "Profile", onOpenProfile)
+    }
+}
+
+@Composable
+private fun MenuAction(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = BerrySpacing.md, vertical = BerrySpacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BerryIcon(icon, null, size = BerrySize.iconSm, tint = BerryColors.TextSecondary)
+        Spacer(Modifier.width(BerrySpacing.sm))
+        Text(label, style = BerryType.BodySmall, color = BerryColors.TextPrimary)
     }
 }
 

@@ -81,6 +81,14 @@ fun BerryApp(viewModel: BerryViewModel) {
                         label = "destination",
                     ) { (dest, file) ->
                         when {
+                            // Checked first so account management overlays whatever screen
+                            // is showing. Previously this state was set but never read, so
+                            // the Manage accounts button did nothing at all.
+                            showAccounts -> ManageAccountsScreen(
+                                viewModel = viewModel,
+                                onBack = { showAccounts = false },
+                            )
+
                             file != null -> EditorScreen(
                                 viewModel = viewModel,
                                 path = file,
@@ -95,6 +103,7 @@ fun BerryApp(viewModel: BerryViewModel) {
                                         viewModel = viewModel,
                                         onOpenRepo = { viewModel.openRepo(it) },
                                         onProfileClick = { showProfile = true },
+                                        onManageAccounts = { showAccounts = true },
                                     )
                                 } else {
                                     FileTreeScreen(
@@ -102,6 +111,7 @@ fun BerryApp(viewModel: BerryViewModel) {
                                         onOpenFile = { openFilePath = it },
                                         onBack = { viewModel.closeRepo() },
                                         onProfileClick = { showProfile = true },
+                                        onManageAccounts = { showAccounts = true },
                                     )
                                 }
                             }
@@ -113,6 +123,7 @@ fun BerryApp(viewModel: BerryViewModel) {
                                     openFilePath = path
                                 },
                                 onProfileClick = { showProfile = true },
+                                        onManageAccounts = { showAccounts = true },
                             )
 
                             dest == Destination.Editor -> {
@@ -130,6 +141,7 @@ fun BerryApp(viewModel: BerryViewModel) {
                                         onOpenFile = { openFilePath = it },
                                         onBack = { destination = Destination.Repos },
                                         onProfileClick = { showProfile = true },
+                                        onManageAccounts = { showAccounts = true },
                                     )
                                 }
                             }
@@ -137,11 +149,13 @@ fun BerryApp(viewModel: BerryViewModel) {
                             dest == Destination.Terminal -> TerminalScreen(
                                 viewModel = viewModel,
                                 onProfileClick = { showProfile = true },
+                                        onManageAccounts = { showAccounts = true },
                             )
 
                             dest == Destination.Agent -> AgentScreen(
                                 viewModel = viewModel,
                                 onProfileClick = { showProfile = true },
+                                        onManageAccounts = { showAccounts = true },
                             )
 
                             dest == Destination.Settings -> SettingsScreen(

@@ -67,6 +67,7 @@ fun FileTreeScreen(
     onOpenFile: (String) -> Unit,
     onBack: () -> Unit,
     onProfileClick: () -> Unit,
+    onManageAccounts: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val repo by viewModel.openRepo.collectAsStateWithLifecycle()
@@ -94,9 +95,9 @@ fun FileTreeScreen(
         BerryTopBar(
             title = repoValue.name,
             subtitle = "${repoValue.ownerLogin} · ${repoValue.defaultBranch}",
-            user = user,
-            isOwner = isOwner,
+            viewModel = viewModel,
             onProfileClick = onProfileClick,
+            onManageAccounts = onManageAccounts,
             leading = {
                 BerryIconButton(BerryIcons.ChevronLeft, "Back", onBack)
             },

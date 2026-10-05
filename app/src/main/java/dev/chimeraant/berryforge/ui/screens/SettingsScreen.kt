@@ -129,8 +129,7 @@ fun SettingsScreen(
         BerryTopBar(
             title = "Settings",
             subtitle = user?.login,
-            user = user,
-            isOwner = isOwner,
+            viewModel = viewModel,
             onProfileClick = onProfileClick,
         )
 

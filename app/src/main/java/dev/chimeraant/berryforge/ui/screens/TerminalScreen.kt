@@ -53,6 +53,7 @@ import dev.chimeraant.berryforge.ui.design.BerryType
 fun TerminalScreen(
     viewModel: BerryViewModel,
     onProfileClick: () -> Unit,
+    onManageAccounts: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val user by viewModel.user.collectAsStateWithLifecycle()
@@ -80,9 +81,9 @@ fun TerminalScreen(
         BerryTopBar(
             title = "Terminal",
             subtitle = title,
-            user = user,
-            isOwner = isOwner,
+            viewModel = viewModel,
             onProfileClick = onProfileClick,
+            onManageAccounts = onManageAccounts,
             actions = {
                 BerryIconButton(
                     BerryIcons.Refresh,

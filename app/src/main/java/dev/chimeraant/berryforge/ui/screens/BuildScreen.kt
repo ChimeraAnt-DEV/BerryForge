@@ -72,6 +72,7 @@ fun BuildScreen(
     viewModel: BerryViewModel,
     onOpenFileAtLine: (path: String, line: Int) -> Unit,
     onProfileClick: () -> Unit,
+    onManageAccounts: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.gradle.state.collectAsStateWithLifecycle()
@@ -116,9 +117,9 @@ fun BuildScreen(
                 is BuildState.Cancelled -> "cancelled"
                 else -> repo?.fullName ?: "No repository open"
             },
-            user = user,
-            isOwner = isOwner,
+            viewModel = viewModel,
             onProfileClick = onProfileClick,
+            onManageAccounts = onManageAccounts,
             actions = {
                 if (running) {
                     BerryIconButton(BerryIcons.Close, "Cancel build", onClick = { viewModel.gradle.cancel() }, tint = BerryColors.Danger)

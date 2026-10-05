@@ -85,6 +85,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 fun AgentScreen(
     viewModel: BerryViewModel,
     onProfileClick: () -> Unit,
+    onManageAccounts: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val events by viewModel.sessions.events.collectAsStateWithLifecycle()
@@ -126,9 +127,9 @@ fun AgentScreen(
                 active -> "Session in progress"
                 else -> "Not connected"
             },
-            user = user,
-            isOwner = isOwner,
+            viewModel = viewModel,
             onProfileClick = onProfileClick,
+            onManageAccounts = onManageAccounts,
             actions = {
                 BerryIconButton(BerryIcons.History, "Session history", onClick = { historyOpen = true })
             },

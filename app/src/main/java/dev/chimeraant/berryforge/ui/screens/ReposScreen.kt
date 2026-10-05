@@ -61,6 +61,7 @@ fun ReposScreen(
     viewModel: BerryViewModel,
     onOpenRepo: (GhRepo) -> Unit,
     onProfileClick: () -> Unit,
+    onManageAccounts: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val repos by viewModel.repos.collectAsStateWithLifecycle()
@@ -82,9 +83,9 @@ fun ReposScreen(
         BerryTopBar(
             title = "Repositories",
             subtitle = "${repos.size} accessible",
-            user = user,
-            isOwner = isOwner,
+            viewModel = viewModel,
             onProfileClick = onProfileClick,
+            onManageAccounts = onManageAccounts,
             actions = {
                 BerryIconButton(
                     BerryIcons.Refresh,
