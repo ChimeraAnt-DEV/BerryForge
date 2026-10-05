@@ -49,7 +49,8 @@ class BuildLogParser {
      * Matches both the plain form and the fully-qualified "com.foo.BarTest > testBaz FAILED".
      */
     private val gradleTestFailure = Regex("""^(.+?\s*>\s*.+?)\s+FAILED$""")
-    private val testFailure = Regex("""^(?:\s*)FAILED\s+(.+?)\s*$""")
+    /** "FAILED" followed by whitespace or a colon, then the test name. */
+    private val testFailure = Regex("""^(?:\s*)FAILED\s*:?\s+(.+?)\s*$""")
     private val manifestError = Regex("""^.*AndroidManifest\.xml:(\d+):(?:(\d+):)?\s*(?:error:\s*)?(.*)$""")
 
     /** A labelled "error:" token, so the word "error" inside prose does not count. */
@@ -149,16 +150,18 @@ class BuildLogParser {
         }
         testFailure.find(trimmed)?.let { match ->
             val (name) = match.destructured
-            if (name.contains(":")) {
-                val error = BuildError(
-                    path = "",
-                    line = 0,
-                    message = "Test failed: $name",
-                    kind = ErrorKind.Test,
-                    raw = text,
-                )
-                return LogLine(text, LogStream.Error, LogSeverity.Error, error)
-            }
+            // No further guard is needed: the pattern already requires a name after
+            // FAILED, so a bare "FAILED" line does not match. An earlier version also
+            // required a colon in the name, which rejected the plain
+            // "FAILED: com.example.MyTest.method" form.
+            val error = BuildError(
+                path = "",
+                line = 0,
+                message = "Test failed: $name",
+                kind = ErrorKind.Test,
+                raw = text,
+            )
+            return LogLine(text, LogStream.Error, LogSeverity.Error, error)
         }
 
         // ---- Line-level severity ----

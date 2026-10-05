@@ -54,6 +54,24 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
+      # Unit tests run before the artifact is uploaded: a green build with failing
+      # tests is not a passing build.
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Run lint
+        run: ./gradlew lintDebug --no-daemon
+
+      # Lint findings are advisory for now, but the report is worth keeping.
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-report
+          path: app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+          retention-days: 14
+
       # The Gradle build names the output BerryForge.apk itself (see the
       # androidComponents block in app/build.gradle.kts), so there is no rename
       # step here — the artefact is already called the right thing.

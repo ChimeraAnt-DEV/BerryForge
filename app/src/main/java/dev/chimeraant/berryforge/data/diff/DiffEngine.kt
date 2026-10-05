@@ -16,8 +16,8 @@ object DiffEngine {
     }
 
     fun compute(before: String, after: String): Result {
-        val a = before.lines()
-        val b = after.lines()
+        val a = splitLines(before)
+        val b = splitLines(after)
         val lcs = longestCommonSubsequence(a, b)
 
         val lines = mutableListOf<Line>()
@@ -53,6 +53,15 @@ object DiffEngine {
 
         return Result(added, removed, groupIntoHunks(lines, context = 3))
     }
+
+    /**
+     * Splits text into lines, treating an empty string as zero lines.
+     *
+     * `"".lines()` returns `[""]` — a single empty line — which made a newly created file
+     * report as +1 rather than its real line count, and a deleted file as -1.
+     */
+    private fun splitLines(text: String): List<String> =
+        if (text.isEmpty()) emptyList() else text.lines()
 
     private fun longestCommonSubsequence(a: List<String>, b: List<String>): List<Pair<Int, Int>> {
         val n = a.size
