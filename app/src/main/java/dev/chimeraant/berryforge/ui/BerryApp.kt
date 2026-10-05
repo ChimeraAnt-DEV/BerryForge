@@ -26,6 +26,7 @@ import dev.chimeraant.berryforge.ui.components.BerrySnackbar
 import dev.chimeraant.berryforge.ui.design.BerryColors
 import dev.chimeraant.berryforge.ui.design.BerryIcons
 import dev.chimeraant.berryforge.ui.screens.BuildScreen
+import dev.chimeraant.berryforge.ui.screens.AgentScreen
 import dev.chimeraant.berryforge.ui.screens.EditorScreen
 import dev.chimeraant.berryforge.ui.screens.SettingsScreen
 import dev.chimeraant.berryforge.ui.screens.ToolchainWizardScreen
@@ -126,6 +127,11 @@ fun BerryApp(viewModel: BerryViewModel) {
                                     )
                                 }
                             }
+
+                            dest == Destination.Agent -> AgentScreen(
+                                viewModel = viewModel,
+                                onProfileClick = { destination = Destination.Settings },
+                            )
 
                             dest == Destination.Settings -> SettingsScreen(
                                 viewModel = viewModel,

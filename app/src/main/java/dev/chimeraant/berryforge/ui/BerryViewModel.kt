@@ -85,6 +85,11 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
     private val _onboardingDone = MutableStateFlow(false)
     val onboardingDone: StateFlow<Boolean> = _onboardingDone.asStateFlow()
 
+    private val _pendingApprovals =
+        MutableStateFlow<List<dev.chimeraant.berryforge.session.ApprovalRequest>>(emptyList())
+    val pendingApprovals: StateFlow<List<dev.chimeraant.berryforge.session.ApprovalRequest>> =
+        _pendingApprovals.asStateFlow()
+
     val commitFlow get() = container.commitFlow
     val gradle get() = container.gradle
     val toolchain get() = container.toolchain
@@ -106,6 +111,9 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
         }
         viewModelScope.launch {
             container.settings.toolchainReady.collect { _toolchainReady.value = it }
+        }
+        viewModelScope.launch {
+            container.sessions.pending.collect { _pendingApprovals.value = it }
         }
         viewModelScope.launch { restoreSession() }
     }
