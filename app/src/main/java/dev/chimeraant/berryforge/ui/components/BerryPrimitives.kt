@@ -1,6 +1,7 @@
 package dev.chimeraant.berryforge.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -105,6 +106,22 @@ private fun skinFor(variant: BerryButtonVariant): ButtonSkin = when (variant) {
 /**
  * The single button in BerryForge. Squarer than Material, with a state-shifting accent
  * and a press-scale that keeps taps feeling physical.
+ *
+ * ## Why the background is not animated directly
+ *
+ * Compose interpolates colours component-wise, and `Color.Transparent` is
+ * `0x00000000` — transparent *black*, not the absence of a colour. Animating a Ghost
+ * button's background from Transparent to Surface3 therefore sweeps the RGB channels
+ * from black to navy while the alpha climbs, so the button passes through muddy dark
+ * grey instead of fading its own hue in.
+ *
+ * On a rapid tap sequence those animations are cancelled and restarted faster than
+ * they complete, and the button can be left resting on an intermediate value — which is
+ * exactly the reported symptom of the icon and text colour vanishing until you navigate
+ * away and back (recomposition reset the animation to its target).
+ *
+ * The fix is to keep the RGB constant and animate only the alpha, so every frame is a
+ * legitimate colour rather than an interpolated black blend.
  */
 @Composable
 fun BerryButton(
@@ -123,17 +140,27 @@ fun BerryButton(
     val pressed by interaction.collectIsPressedAsState()
     val hovered by interaction.collectIsHoveredAsState()
 
-    val container by animateColorAsState(
-        targetValue = when {
-            !enabled -> BerryColors.Surface2
-            pressed -> skin.containerPressed
-            hovered && skin.container != Color.Transparent -> skin.container.copy(alpha = 0.9f)
-            hovered -> BerryColors.Surface2
-            else -> skin.container
-        },
+    // The hue is chosen by state; the animation only moves between two alphas of the
+    // *same* colour, so an interrupted animation can never rest on a muddy blend.
+    val baseColor = when {
+        !enabled -> BerryColors.Surface2
+        pressed -> skin.containerPressed
+        hovered && skin.container != Color.Transparent -> skin.container
+        hovered -> BerryColors.Surface2
+        else -> skin.container
+    }
+    val targetAlpha = when {
+        !enabled -> 1f
+        skin.container == Color.Transparent && !pressed && !hovered -> 0f
+        else -> 1f
+    }
+    val animatedAlpha by animateFloatAsState(
+        targetValue = targetAlpha,
         animationSpec = tween(BerryMotion.Fast),
-        label = "buttonContainer",
+        label = "buttonAlpha",
     )
+    val container = baseColor.copy(alpha = animatedAlpha)
+
     val contentColor by animateColorAsState(
         targetValue = if (enabled) skin.content else BerryColors.TextDisabled,
         animationSpec = tween(BerryMotion.Fast),
@@ -224,16 +251,26 @@ fun BerryIconButton(
         animationSpec = tween(BerryMotion.Fast),
         label = "iconTint",
     )
-    val bg by animateColorAsState(
-        targetValue = when {
-            pressed -> BerryColors.Surface4
-            hovered -> BerryColors.Surface3
-            active && activeTint != null -> activeTint.copy(alpha = 0.14f)
-            else -> Color.Transparent
-        },
+    // Same reasoning as BerryButton: the RGB stays fixed and only the alpha animates, so
+    // an interrupted animation cannot leave the icon resting on a blend of black.
+    val baseBg = when {
+        pressed -> BerryColors.Surface4
+        hovered -> BerryColors.Surface3
+        active && activeTint != null -> activeTint
+        else -> BerryColors.Surface3
+    }
+    val targetAlpha = when {
+        pressed -> 1f
+        hovered -> 1f
+        active && activeTint != null -> 0.14f
+        else -> 0f
+    }
+    val animatedAlpha by animateFloatAsState(
+        targetValue = targetAlpha,
         animationSpec = tween(BerryMotion.Fast),
-        label = "iconBg",
+        label = "iconBgAlpha",
     )
+    val bg = baseBg.copy(alpha = animatedAlpha)
     Box(
         modifier = modifier
             .size(containerSize)
