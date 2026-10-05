@@ -68,9 +68,13 @@ fun ToolchainWizardScreen(
     var state by remember { mutableStateOf<ToolchainState>(ToolchainState.NotInstalled) }
     var currentIndex by remember { mutableStateOf(-1) }
     var fraction by remember { mutableStateOf(0f) }
+    var installLog by remember { mutableStateOf<List<String>>(emptyList()) }
     var running by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
+        launch {
+            viewModel.toolchain.log.collect { installLog = it }
+        }
         viewModel.toolchain.state.collect { latest ->
             state = latest
             when (latest) {
@@ -172,6 +176,40 @@ fun ToolchainWizardScreen(
                     )
                 }
                 Spacer(Modifier.height(BerrySpacing.xl))
+            }
+
+            // ---- Install log: every step, and the real error when one occurs ----
+            if (installLog.isNotEmpty()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    BerryIcon(BerryIcons.Terminal, null, size = BerrySize.iconSm, tint = BerryColors.TextTertiary)
+                    Spacer(Modifier.width(BerrySpacing.sm))
+                    Text("INSTALL LOG", style = BerryType.Overline, color = BerryColors.TextTertiary)
+                }
+                Spacer(Modifier.height(BerrySpacing.sm))
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(160.dp)
+                        .clip(RoundedCornerShape(BerryRadius.md))
+                        .background(BerryColors.TermBackground)
+                        .verticalScroll(rememberScrollState())
+                        .padding(BerrySpacing.md),
+                ) {
+                    Column {
+                        installLog.forEach { line ->
+                            Text(
+                                line,
+                                style = BerryType.CodeMicro,
+                                color = if (line.startsWith("FAILED")) {
+                                    BerryColors.Danger
+                                } else {
+                                    BerryColors.TextSecondary
+                                },
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(BerrySpacing.lg))
             }
 
             // ---- Actions ----

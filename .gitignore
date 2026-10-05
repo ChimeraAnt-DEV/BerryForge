@@ -12,3 +12,4 @@ app/build/
 *.aab
 *.keystore
 !debug.keystore
+.kotlin/
