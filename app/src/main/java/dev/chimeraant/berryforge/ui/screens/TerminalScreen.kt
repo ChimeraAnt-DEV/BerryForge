@@ -18,12 +18,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import dev.chimeraant.berryforge.terminal.BerryTerminalView
 import dev.chimeraant.berryforge.ui.BerryViewModel
 import dev.chimeraant.berryforge.ui.components.BerryButton
@@ -55,6 +57,7 @@ fun TerminalScreen(
 ) {
     val user by viewModel.user.collectAsStateWithLifecycle()
     val isOwner by viewModel.isOwner.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
     var fontSize by remember { mutableStateOf(13) }
     var title by remember { mutableStateOf("shell") }
     var sessionKey by remember { mutableStateOf(0) }
@@ -154,7 +157,7 @@ fun TerminalScreen(
                 onClick = {
                     val next = (fontSize - 1).coerceAtLeast(9)
                     fontSize = next
-                    kotlinx.coroutines.runBlocking { viewModel.settings.setTerminalFontSize(next) }
+                    scope.launch { viewModel.settings.setTerminalFontSize(next) }
                 },
                 tint = BerryColors.TextTertiary,
             )
@@ -165,7 +168,7 @@ fun TerminalScreen(
                 onClick = {
                     val next = (fontSize + 1).coerceAtMost(28)
                     fontSize = next
-                    kotlinx.coroutines.runBlocking { viewModel.settings.setTerminalFontSize(next) }
+                    scope.launch { viewModel.settings.setTerminalFontSize(next) }
                 },
                 tint = BerryColors.TextTertiary,
             )

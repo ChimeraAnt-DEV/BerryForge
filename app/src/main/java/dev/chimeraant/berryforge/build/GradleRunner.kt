@@ -101,6 +101,7 @@ class GradleRunner(
         val started = System.currentTimeMillis()
         val lines = mutableListOf<LogLine>()
         val parsedErrors = mutableListOf<BuildError>()
+        var pendingSinceFlush = 0
 
         _logLines.value = emptyList()
         _errors.value = emptyList()
@@ -175,12 +176,24 @@ class GradleRunner(
                     val parsed = parser.classify(line)
                     lines += parsed
                     parsed.error?.let { parsedErrors += it }
-                    _logLines.value = lines.toList()
-                    _errors.value = parsedErrors.toList()
+
+                    // Emit in batches rather than on every line. Publishing a fresh copy
+                    // of the whole list per line made a long build quadratic: a 5,000-line
+                    // log copied ~12 million entries. Flushing every 64 lines (and at the
+                    // end) keeps the UI live without the copying cost.
+                    pendingSinceFlush++
+                    if (pendingSinceFlush >= FLUSH_EVERY_LINES) {
+                        pendingSinceFlush = 0
+                        _logLines.value = lines.toList()
+                        _errors.value = parsedErrors.toList()
+                    }
                     _state.value = BuildState.Running(task, started, lines.size)
                     onLine(parsed)
                 }
             }
+            // Final flush so nothing is left unpublished.
+            _logLines.value = lines.toList()
+            _errors.value = parsedErrors.toList()
             val finished = proc.waitFor(2, TimeUnit.MINUTES) && proc.exitValue() == 0
             val duration = System.currentTimeMillis() - started
             val result = when {
@@ -271,4 +284,12 @@ class GradleRunner(
     /** Single-quotes an argument for `sh -c`, escaping embedded quotes. */
     private fun shellQuote(value: String): String =
         "'" + value.replace("'", "'\\''") + "'"
+
+    companion object {
+        private const val TAG = "GradleRunner"
+
+        /** How many parsed lines accumulate before the log flow is republished. */
+        private const val FLUSH_EVERY_LINES = 64
+    }
+
 }
