@@ -104,6 +104,15 @@ class ToolchainInstaller(private val context: Context) {
     val buildToolsDir: File?
         get() = buildTools.listFiles()?.filter { it.isDirectory }?.maxByOrNull { it.name }
 
+    /**
+     * The installed aapt2, for `android.aapt2FromMavenOverride`.
+     *
+     * AGP fetches its own aapt2 from Google's Maven repository by default, and that
+     * binary is x86_64 Linux — it cannot execute on an ARM device. Pointing AGP at the
+     * aarch64 build-tools copy is what makes resource compilation work on-device.
+     */
+    val aapt2: File? get() = buildToolsDir?.let { File(it, "aapt2") }?.takeIf { it.exists() }
+
     private fun note(message: String) {
         Log.i(TAG, message)
         _log.value = _log.value + message

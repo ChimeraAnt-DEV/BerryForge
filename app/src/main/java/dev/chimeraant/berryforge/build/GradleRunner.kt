@@ -33,10 +33,32 @@ sealed interface BuildState {
 /**
  * Runs Gradle on-device.
  *
- * The runner shells out to the project's own `./gradlew` when present (falling back to
- * a bundled Gradle distribution otherwise), inheriting the hermetic environment from
- * [ToolchainInstaller]. Output is streamed line by line so the log viewer fills live
- * and the error parser can react as lines arrive.
+ * The runner shells out to the project's own `gradlew` (falling back to a `gradle` on
+ * PATH), inheriting the hermetic environment from [ToolchainInstaller]. Output is
+ * streamed line by line so the log viewer fills live and the error parser can react as
+ * lines arrive.
+ *
+ * ## Invocation
+ *
+ * `gradlew` is a shell script with a `#!/bin/sh` shebang, and Android has no `/bin/sh`
+ * (it is `/system/bin/sh`), so executing it directly fails with ENOENT. It is therefore
+ * run as `sh gradlew <args>`.
+ *
+ * ## Known platform limitation (not fixed here)
+ *
+ * Android 10 (API 29) and later enforce W^X: the platform refuses to `execve()` a file
+ * that lives in a writable app-private directory, regardless of the file mode bits. That
+ * applies to the JDK, to `gradlew`, and to any other binary this app unpacks into
+ * `filesDir` — which is exactly what the toolchain installer does.
+ *
+ * Termux and AndroidIDE avoid this by targeting SDK 28. BerryForge targets SDK 35, so
+ * the restriction applies and an on-device build cannot work by unpacking and executing
+ * binaries this way.
+ *
+ * The workaround that does work is to ship the executables inside the APK (as
+ * `jniLibs`, which the platform treats as read-only and executable) rather than
+ * extracting them at runtime. That is a packaging change, not a code change, and is
+ * tracked as follow-up work rather than being silently papered over here.
  */
 class GradleRunner(
     private val context: Context,
@@ -84,16 +106,12 @@ class GradleRunner(
         _errors.value = emptyList()
         _state.value = BuildState.Running(task, started, 0)
 
+        ensureGradleProperties()
+
         val gradlew = File(projectDir, "gradlew")
-        val command = buildList {
-            if (gradlew.exists()) {
-                gradlew.setExecutable(true, false)
-                add(gradlew.absolutePath)
-            } else {
-                add("sh")
-                add("-c")
-                add("gradle")
-            }
+
+        // Build the command list first, then decide how to invoke it.
+        val gradleArgs = buildList {
             add("--no-daemon")
             add("--console=plain")
             add("--stacktrace")
@@ -101,15 +119,48 @@ class GradleRunner(
             addAll(extraArgs)
         }
 
+        /*
+         * How the wrapper is invoked matters on Android:
+         *
+         *  - `gradlew` is a shell script whose shebang is `#!/bin/sh`, and Android has no
+         *    `/bin/sh` (it is `/system/bin/sh`). Executing the file directly therefore
+         *    fails with ENOENT even though the file exists and is executable.
+         *  - Executing anything from app-private storage is additionally blocked by the
+         *    platform's W^X policy on Android 10+. Passing the script to the shell as an
+         *    argument sidesteps the interpreter lookup, though it does not lift W^X —
+         *    see the note in the class documentation.
+         *
+         * So: run `sh gradlew <args>` rather than `./gradlew <args>`.
+         */
+        val command = buildList {
+            if (gradlew.exists()) {
+                add("sh")
+                add(gradlew.absolutePath)
+            } else {
+                // No wrapper in the project: fall back to a `gradle` on PATH. The old
+                // fallback used `sh -c "gradle"` and then appended the arguments to the
+                // *outer* list, so the shell ran a bare `gradle` and every task name,
+                // --no-daemon and --stacktrace were silently dropped.
+                add("sh")
+                add("-c")
+                add("gradle " + gradleArgs.joinToString(" ") { shellQuote(it) })
+                return@buildList
+            }
+            addAll(gradleArgs)
+        }
+
         val builder = ProcessBuilder(command)
             .directory(projectDir)
             .redirectErrorStream(true)
         builder.environment().putAll(toolchain.environment())
-        // Point Gradle at the on-device SDK explicitly.
+        // Point Gradle at the on-device SDK explicitly, and hand AGP the aapt2 we
+        // installed. Without the override AGP downloads Google's aapt2, which is an
+        // x86_64 Linux binary and cannot run here.
         val localProps = File(projectDir, "local.properties")
-        if (!localProps.exists()) {
-            runCatching { localProps.writeText("sdk.dir=${toolchain.sdkRoot.absolutePath}\n") }
-        }
+        runCatching { localProps.writeText(buildString {
+            append("sdk.dir=${toolchain.sdkRoot.absolutePath}\n")
+            toolchain.aapt2?.let { append("android.aapt2FromMavenOverride=${it.absolutePath}\n") }
+        }) }
 
         try {
             val proc = builder.start()
@@ -193,4 +244,31 @@ class GradleRunner(
         _logLines.value = emptyList()
         _errors.value = emptyList()
     }
+
+    /**
+     * Writes JVM tuning into the shared Gradle home.
+     *
+     * On-device memory is tight and Gradle's defaults assume a desktop. Setting an
+     * explicit heap and disabling the daemon's file-watching keeps a build from being
+     * killed by the low-memory killer part-way through.
+     */
+    private fun ensureGradleProperties() {
+        runCatching {
+            val home = File(toolchain.environment()["GRADLE_USER_HOME"] ?: return@runCatching)
+            home.mkdirs()
+            val props = File(home, "gradle.properties")
+            val desired = buildString {
+                appendLine("org.gradle.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8")
+                appendLine("org.gradle.daemon=false")
+                appendLine("org.gradle.parallel=false")
+                appendLine("org.gradle.caching=true")
+                appendLine("org.gradle.vfs.watch=false")
+            }
+            if (!props.exists() || props.readText() != desired) props.writeText(desired)
+        }
+    }
+
+    /** Single-quotes an argument for `sh -c`, escaping embedded quotes. */
+    private fun shellQuote(value: String): String =
+        "'" + value.replace("'", "'\\''") + "'"
 }
