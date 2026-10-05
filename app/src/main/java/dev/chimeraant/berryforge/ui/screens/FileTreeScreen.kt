@@ -91,7 +91,7 @@ fun FileTreeScreen(
         else base.filter { it.name.contains(query, ignoreCase = true) }
     }
 
-    Column(modifier.fillMaxSize().background(BerryColors.Base)) {
+    Column(modifier.fillMaxSize()) {
         BerryTopBar(
             title = repoValue.name,
             subtitle = "${repoValue.ownerLogin} · ${repoValue.defaultBranch}",

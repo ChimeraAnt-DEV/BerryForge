@@ -108,7 +108,7 @@ fun BuildScreen(
     val canBuild = repo != null
 
     Box(modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().background(BerryColors.Base)) {
+        Column(Modifier.fillMaxSize()) {
         BerryTopBar(
             title = "Build",
             subtitle = when (val current = state) {

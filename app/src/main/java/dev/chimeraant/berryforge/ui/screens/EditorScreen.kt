@@ -152,7 +152,7 @@ fun EditorScreen(
     val dirty = text != originalText || persistedDirty
 
     Box(modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().background(BerryColors.Base).imePadding()) {
+        Column(Modifier.fillMaxSize().imePadding()) {
         EditorHeader(
             repoName = repoValue.fullName,
             path = path,

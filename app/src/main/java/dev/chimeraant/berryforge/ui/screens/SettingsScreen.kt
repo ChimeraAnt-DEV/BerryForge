@@ -125,7 +125,7 @@ fun SettingsScreen(
         toolchainReady = viewModel.settings.toolchainReady.first()
     }
 
-    Column(modifier.fillMaxSize().background(BerryColors.Base)) {
+    Column(modifier.fillMaxSize()) {
         BerryTopBar(
             title = "Settings",
             subtitle = user?.login,

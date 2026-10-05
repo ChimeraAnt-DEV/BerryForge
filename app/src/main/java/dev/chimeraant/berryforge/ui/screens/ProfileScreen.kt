@@ -95,7 +95,7 @@ fun ProfileScreen(
         repos.filter { it.ownerLogin.equals(user?.login, ignoreCase = true) }
     }
 
-    Column(modifier.fillMaxSize().background(BerryColors.Base)) {
+    Column(modifier.fillMaxSize()) {
         Row(
             Modifier
                 .fillMaxWidth()

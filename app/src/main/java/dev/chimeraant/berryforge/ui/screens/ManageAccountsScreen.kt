@@ -78,7 +78,7 @@ fun ManageAccountsScreen(
         profiles = loaded
     }
 
-    Column(modifier.fillMaxSize().background(BerryColors.Base)) {
+    Column(modifier.fillMaxSize()) {
         Row(
             Modifier
                 .fillMaxWidth()

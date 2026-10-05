@@ -54,7 +54,13 @@ fun BerryTheme(content: @Composable () -> Unit) {
             colorScheme = scheme,
             typography = BerryType.material,
             shapes = shapes,
-            content = content,
-        )
+        ) {
+            // The animated background sits behind everything. Applying it here means
+            // every screen inherits it rather than each having to opt in and stay
+            // consistent. Screens that paint their own opaque surface simply cover it.
+            dev.chimeraant.berryforge.ui.components.BerryAnimatedBackground {
+                content()
+            }
+        }
     }
 }

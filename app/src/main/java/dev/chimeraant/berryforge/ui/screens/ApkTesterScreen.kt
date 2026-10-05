@@ -83,7 +83,7 @@ fun ApkTesterScreen(
 
     LaunchedEffect(Unit) { refresh() }
 
-    Column(modifier.fillMaxSize().background(BerryColors.Base)) {
+    Column(modifier.fillMaxSize()) {
         Row(
             Modifier
                 .fillMaxWidth()

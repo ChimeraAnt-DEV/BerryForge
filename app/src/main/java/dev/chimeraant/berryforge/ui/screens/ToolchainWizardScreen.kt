@@ -98,7 +98,6 @@ fun ToolchainWizardScreen(
     Box(
         modifier
             .fillMaxSize()
-            .background(BerryColors.Base)
             .systemBarsPadding(),
     ) {
         Column(

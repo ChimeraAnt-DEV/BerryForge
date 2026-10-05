@@ -79,7 +79,7 @@ fun ReposScreen(
         }
     }
 
-    Column(modifier.fillMaxSize().background(BerryColors.Base)) {
+    Column(modifier.fillMaxSize()) {
         BerryTopBar(
             title = "Repositories",
             subtitle = "${repos.size} accessible",

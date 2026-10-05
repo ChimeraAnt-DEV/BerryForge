@@ -64,7 +64,7 @@ fun BerryApp(viewModel: BerryViewModel) {
         if (signedIn && !onboardingDone && !toolchainReady) showWizard = true
     }
 
-    Box(Modifier.fillMaxSize().background(BerryColors.Base)) {
+    Box(Modifier.fillMaxSize()) {
         when {
             !signedIn -> SignInScreen(viewModel = viewModel)
 

@@ -119,7 +119,7 @@ fun AgentScreen(
     val endpoint = (tunnelState as? dev.chimeraant.berryforge.mcp.TunnelState.Up)?.publicUrl
     val active = current != null
 
-    Column(modifier.fillMaxSize().background(BerryColors.Base)) {
+    Column(modifier.fillMaxSize()) {
         BerryTopBar(
             title = "Agent",
             subtitle = when {
