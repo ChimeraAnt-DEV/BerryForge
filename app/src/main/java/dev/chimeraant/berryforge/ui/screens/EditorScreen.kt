@@ -89,6 +89,7 @@ fun EditorScreen(
 
     var text by remember(path) { mutableStateOf("") }
     var originalText by remember(path) { mutableStateOf("") }
+    var persistedDirty by remember(path) { mutableStateOf(false) }
     var loading by remember(path) { mutableStateOf(true) }
     var error by remember(path) { mutableStateOf<String?>(null) }
     var fontSize by remember { mutableStateOf(13) }
@@ -107,22 +108,25 @@ fun EditorScreen(
     var findQuery by remember { mutableStateOf("") }
     var replaceWith by remember { mutableStateOf("") }
 
-    // Load the file: local mirror first, then GitHub, caching both ways.
-    LaunchedEffect(path, repoValue.fullName) {
+    // Load the file through the view model, which resolves mirror -> cache -> GitHub and
+    // records the blob SHA at every step so a later commit has a base to update against.
+    var reloadToken by remember { mutableStateOf(0) }
+    LaunchedEffect(path, repoValue.fullName, reloadToken) {
         loading = true
         error = null
-        val local = viewModel.workspace.readLocal(repoValue.ownerLogin, repoValue.name, path)
-        if (local != null) {
-            text = local
-            originalText = viewModel.workspace.originalOf(repoValue.ownerLogin, repoValue.name, path) ?: local
-            loading = false
-            return@LaunchedEffect
-        }
+        val revalidate = reloadToken > 0
         runCatching {
-            viewModel.loadFile(repoValue.ownerLogin, repoValue.name, path, repoValue.defaultBranch)
+            viewModel.loadFile(
+                owner = repoValue.ownerLogin,
+                name = repoValue.name,
+                path = path,
+                branch = repoValue.defaultBranch,
+                revalidate = revalidate,
+            )
         }.onSuccess { file ->
             text = file.text
-            originalText = file.text
+            originalText = viewModel.workspace.originalOf(repoValue.ownerLogin, repoValue.name, path) ?: file.text
+            persistedDirty = viewModel.isFileDirty(repoValue.ownerLogin, repoValue.name, path)
             loading = false
         }.onFailure { failure ->
             error = failure.message ?: "Could not open this file."
@@ -143,7 +147,9 @@ fun EditorScreen(
         viewModel.settings.tabWidth.collect { tabWidth = it }
     }
 
-    val dirty = text != originalText
+    // Dirty if the buffer differs from the baseline, or if the workspace still has
+    // uncommitted state for this file (which survives a process restart).
+    val dirty = text != originalText || persistedDirty
 
     Box(modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().background(BerryColors.Base).imePadding()) {
@@ -178,10 +184,11 @@ fun EditorScreen(
             onSave = {
                 scope.launch {
                     viewModel.workspace.writeLocal(repoValue.ownerLogin, repoValue.name, path, text)
-                    originalText = viewModel.workspace.originalOf(repoValue.ownerLogin, repoValue.name, path) ?: originalText
+                    persistedDirty = true
                     viewModel.toast("Saved to the local working copy.")
                 }
             },
+            onReload = { reloadToken++ },
         )
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -299,6 +306,7 @@ fun EditorScreen(
         onCommitted = { branch ->
             viewModel.toast("Pushed to $branch.")
             originalText = text
+            persistedDirty = false
         },
     )
 }
@@ -317,6 +325,7 @@ private fun EditorHeader(
     onReview: () -> Unit,
     onCommit: () -> Unit,
     onSave: () -> Unit,
+    onReload: () -> Unit = {},
 ) {
     Column(
         Modifier
@@ -364,6 +373,7 @@ private fun EditorHeader(
                 activeTint = BerryColors.Ai,
                 active = findingCount > 0 || reviewing,
             )
+            BerryIconButton(BerryIcons.Refresh, "Reload from GitHub", onReload)
             BerryIconButton(BerryIcons.Save, "Save", onSave, tint = if (dirty) BerryColors.Edit else BerryColors.TextTertiary)
             BerryIconButton(BerryIcons.PullRequest, "Commit and push", onCommit, tint = BerryColors.Edit)
         }

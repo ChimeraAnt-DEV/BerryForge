@@ -26,6 +26,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -74,8 +75,15 @@ fun FileTreeScreen(
     val loading by viewModel.treeLoading.collectAsStateWithLifecycle()
     var path by remember(repo?.fullName) { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
+    var dirtyPaths by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     val repoValue = repo ?: return
+    // Refresh the dirty set whenever the tree or the open folder changes, off the main
+    // thread: the workspace persists its state to disk, so this is a suspend call.
+    LaunchedEffect(repoValue.fullName, path, viewModel.tree.value) {
+        dirtyPaths = viewModel.workspace.dirtyPaths(repoValue.ownerLogin, repoValue.name).toSet()
+    }
+
     val children = remember(repoValue.fullName, path, viewModel.tree.value, query) {
         val base = viewModel.childrenOf(path)
         if (query.isBlank()) base
@@ -149,7 +157,7 @@ fun FileTreeScreen(
                     ) {
                         TreeRow(
                             entry = entry,
-                            dirty = viewModel.workspace.isDirty(repoValue.ownerLogin, repoValue.name, entry.path),
+                            dirty = entry.path in dirtyPaths,
                             onClick = {
                                 if (entry.isDir) {
                                     path = entry.path

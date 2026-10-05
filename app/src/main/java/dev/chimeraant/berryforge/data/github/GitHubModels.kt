@@ -93,6 +93,38 @@ data class GhContent(
 )
 
 @Serializable
+data class GhBranch(
+    /** GitHub returns "name", not "ref". */
+    val name: String = "",
+    /** GitHub nests the SHA under "commit": {"sha": ...}. */
+    val commit: GhBranchCommit = GhBranchCommit(),
+    val `protected`: Boolean = false,
+) {
+    /** The head commit SHA, exposed under the name the rest of the app uses. */
+    val sha: String get() = commit.sha
+}
+
+@Serializable
+data class GhBranchCommit(
+    val sha: String = "",
+    val url: String? = null,
+)
+
+/** One entry in a Git Data API tree. A null [sha] deletes the path. */
+data class TreeEntry(
+    val path: String,
+    val mode: String,
+    val sha: String?,
+) {
+    companion object {
+        /** Regular file. */
+        const val MODE_FILE = "100644"
+        /** Executable file. */
+        const val MODE_EXECUTABLE = "100755"
+    }
+}
+
+@Serializable
 data class GhCommitRef(
     val sha: String = "",
     val ref: String? = null,

@@ -1,5 +1,7 @@
 package dev.chimeraant.berryforge.data.github
 
+import android.util.Base64
+import android.util.Log
 import dev.chimeraant.berryforge.data.editor.EditorWorkspace
 import dev.chimeraant.berryforge.sandbox.SandboxGuard
 
@@ -12,14 +14,35 @@ data class CommitOutcome(
     val prUrl: String? = null,
     val prNumber: Int? = null,
     val note: String? = null,
+    /** Set when GitHub refused the update because the branch moved under us. */
+    val conflict: Boolean = false,
 )
 
 /**
  * Orchestrates staging → commit → push → optional PR.
  *
- * Both the commit sheet and the MCP `commit` tool call this, so the two paths cannot
- * diverge. In sandbox mode the push step is skipped entirely and the outcome says so,
- * rather than pretending a push happened.
+ * ## Why this uses the Git Data API
+ *
+ * The previous implementation issued one `PUT /contents/{path}` per file. That has three
+ * consequences, all of which were live bugs:
+ *
+ *  - **Not atomic.** A failure on the third of five files left a branch with two of the
+ *    five changes committed.
+ *  - **No deletes.** The contents API needs a separate DELETE call, which was never
+ *    wired up, so a deleted file could not be committed at all.
+ *  - **Binary corruption.** Every file was read as text and re-encoded, so an image or a
+ *    keystore was silently mangled.
+ *
+ * The Git Data API fixes all three: blobs are created for each file, one tree is built
+ * from them, one commit points at that tree, and a single ref update publishes it. Either
+ * all of the change lands or none of it does, deletes are expressed as a null sha in the
+ * tree, and binary content is base64-encoded straight from bytes.
+ *
+ * ## Conflict handling
+ *
+ * The ref update is non-forcing. If the branch moved since we read it, GitHub rejects the
+ * update and [CommitOutcome.conflict] is set rather than the change being silently
+ * force-pushed over someone else's work.
  */
 class CommitFlow(
     private val api: GitHubApi,
@@ -43,12 +66,16 @@ class CommitFlow(
         prTitle: String? = null,
         prBody: String = "",
         baseBranch: String? = null,
+        force: Boolean = false,
     ): CommitOutcome {
         val repo = "$owner/$name"
-        val targetBranch = branch.ifBlank { baseBranch ?: "main" }
+        val base = baseBranch ?: runCatching { api.repo(owner, name).defaultBranch }.getOrDefault("main")
+        val targetBranch = branch.ifBlank { base }
+
         val toCommit = (paths ?: workspace.dirtyPaths(owner, name))
             .distinct()
             .filter { it.isNotBlank() }
+            .sorted()
 
         if (toCommit.isEmpty()) {
             return CommitOutcome(
@@ -60,10 +87,15 @@ class CommitFlow(
             )
         }
 
-        val sandboxed = sandbox.isSandboxed()
-        if (sandboxed) {
-            // Record the commit locally, but never touch the remote.
-            workspace.commitSucceeded(owner, name, toCommit)
+        // ---- Sandbox: record locally, never touch the remote ----
+        if (sandbox.isSandboxed()) {
+            workspace.commitSucceeded(
+                owner = owner,
+                name = name,
+                newShas = emptyMap(),
+                committedPaths = toCommit,
+                branch = targetBranch,
+            )
             return CommitOutcome(
                 branch = targetBranch,
                 commitSha = "sandbox-${System.currentTimeMillis()}",
@@ -84,34 +116,91 @@ class CommitFlow(
             )
         }
 
-        // Ensure the target branch exists before writing to it.
-        val base = baseBranch ?: runCatching { api.repo(owner, name).defaultBranch }.getOrDefault("main")
-        if (targetBranch != base) {
-            val exists = runCatching { api.branches(owner, name).any { it.ref == targetBranch } }.getOrDefault(false)
-            if (!exists) {
-                val baseSha = api.headSha(owner, name, base)
+        // ---- Ensure the branch exists ----
+        val baseSha = api.headShaOrNull(owner, name, base)
+            ?: throw GitHubException(404, "branches/$base", "Default branch '$base' not found.")
+
+        val existingHead = api.headShaOrNull(owner, name, targetBranch)
+        val branchIsNew = existingHead == null
+        if (branchIsNew) {
+            if (targetBranch != base) {
                 api.createBranch(owner, name, targetBranch, baseSha)
             }
         }
+        val parentSha = existingHead ?: baseSha
 
-        var lastSha = ""
-        toCommit.forEach { path ->
-            val content = workspace.currentText(owner, name, path)
-            val baseSha = workspace.baseSha(owner, name, path)
-            val result = api.writeFile(
+        // ---- Build blobs for every staged file, in one pass ----
+        val newShas = HashMap<String, String>()
+        val entries = mutableListOf<TreeEntry>()
+
+        try {
+            toCommit.forEach { path ->
+                val state = workspace.fileState(owner, name, path)
+                if (!state.present) {
+                    // A delete is expressed as a null sha in the tree.
+                    entries += TreeEntry(path = path, mode = TreeEntry.MODE_FILE, sha = null)
+                    return@forEach
+                }
+
+                val bytes = workspace.currentBytes(owner, name, path)
+                val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                val blobSha = api.createBlob(owner, name, encoded)
+                newShas[path] = blobSha
+                entries += TreeEntry(
+                    path = path,
+                    mode = if (isExecutable(path)) TreeEntry.MODE_EXECUTABLE else TreeEntry.MODE_FILE,
+                    sha = blobSha,
+                )
+            }
+
+            // ---- One tree, one commit, one ref update ----
+            val baseTree = api.commitTreeSha(owner, name, parentSha)
+            val treeSha = api.createTree(owner, name, entries, baseTree)
+            val commitSha = api.createCommit(
                 owner = owner,
                 name = name,
-                path = path,
-                content = content,
-                message = if (toCommit.size == 1) message else "$message ($path)",
-                branch = targetBranch,
-                existingSha = baseSha,
+                message = message,
+                treeSha = treeSha,
+                parentShas = listOf(parentSha),
             )
-            lastSha = result.commitSha
+
+            try {
+                api.updateRef(owner, name, targetBranch, commitSha, force = force)
+            } catch (error: GitHubException) {
+                if (error.code == 422 && !force) {
+                    // The branch moved while we were building the commit. Nothing was
+                    // published, so the working copy is untouched and the user can retry.
+                    Log.w(TAG, "Non-fast-forward update rejected for $repo@$targetBranch")
+                    return CommitOutcome(
+                        branch = targetBranch,
+                        commitSha = "",
+                        files = toCommit,
+                        pushed = false,
+                        conflict = true,
+                        note = "The branch moved while the commit was being built. " +
+                            "Pull the latest changes and try again.",
+                    )
+                }
+                throw error
+            }
+
+            workspace.commitSucceeded(
+                owner = owner,
+                name = name,
+                newShas = newShas,
+                committedPaths = toCommit,
+                branch = targetBranch,
+            )
+        } catch (error: Exception) {
+            // Nothing was published, so clean up a branch we created for this attempt
+            // rather than leaving an empty one behind.
+            if (branchIsNew && targetBranch != base) {
+                runCatching { api.deleteBranch(owner, name, targetBranch) }
+            }
+            throw error
         }
 
-        workspace.commitSucceeded(owner, name, toCommit)
-
+        // ---- Optional PR ----
         var prUrl: String? = null
         var prNumber: Int? = null
         if (openPr && targetBranch != base) {
@@ -126,12 +215,12 @@ class CommitFlow(
                 )
                 prUrl = pr.html_url
                 prNumber = pr.number
-            }
+            }.onFailure { Log.w(TAG, "Commit succeeded but the PR failed", it) }
         }
 
         return CommitOutcome(
             branch = targetBranch,
-            commitSha = lastSha,
+            commitSha = newShas.values.lastOrNull().orEmpty(),
             files = toCommit,
             pushed = true,
             prUrl = prUrl,
@@ -144,7 +233,15 @@ class CommitFlow(
         val files = paths ?: workspace.dirtyPaths(owner, name)
         val builder = StringBuilder()
         files.forEach { path ->
+            val state = workspace.fileState(owner, name, path)
             val before = workspace.originalOf(owner, name, path).orEmpty()
+            if (!state.present) {
+                builder.appendLine("--- a/$path")
+                builder.appendLine("+++ /dev/null")
+                builder.appendLine("@@ -1 +0,0 @@")
+                builder.appendLine("-<file deleted>")
+                return@forEach
+            }
             val after = workspace.currentText(owner, name, path)
             if (before == after) return@forEach
             builder.appendLine("--- a/$path")
@@ -162,5 +259,12 @@ class CommitFlow(
             }
         }
         return builder.toString()
+    }
+
+    private fun isExecutable(path: String): Boolean =
+        path.endsWith(".sh") || path.endsWith("gradlew") || path.endsWith(".bash")
+
+    companion object {
+        private const val TAG = "CommitFlow"
     }
 }

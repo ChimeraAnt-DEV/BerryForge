@@ -416,33 +416,65 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /**
-     * Loads a file for the editor: the disk cache is consulted before GitHub, and the
-     * result is written into the local mirror so later reads and commits agree.
+     * Loads a file for the editor.
+     *
+     * Resolution order is mirror → cache → GitHub, and the blob SHA is captured at every
+     * step so a later commit has something to update against. Previously the cache path
+     * stored `sha = ""`, which is why committing a file that had been served from cache
+     * always failed.
+     *
+     * [revalidate] forces a GitHub round-trip even when a local copy exists, so the
+     * editor can refresh a file that changed remotely instead of showing a stale mirror
+     * forever.
      */
     suspend fun loadFile(
         owner: String,
         name: String,
         path: String,
         branch: String,
+        revalidate: Boolean = false,
     ): dev.chimeraant.berryforge.data.github.RepoFile {
         val repoFull = "$owner/$name"
-        val cachedText = container.repoCache.getFile(repoFull, branch, path)
-        if (cachedText != null) {
-            val file = dev.chimeraant.berryforge.data.github.RepoFile(
-                repo = repoFull,
-                path = path,
-                sha = "",
-                text = cachedText,
-                branch = branch,
-            )
-            container.workspace.storeFetched(owner, name, file)
-            return file
+
+        if (!revalidate) {
+            // 1. The mirror, if the file has been opened or written before.
+            val local = container.workspace.readLocal(owner, name, path)
+            if (local != null) {
+                val state = container.workspace.fileState(owner, name, path)
+                return dev.chimeraant.berryforge.data.github.RepoFile(
+                    repo = repoFull,
+                    path = path,
+                    sha = state.baseSha,
+                    text = local,
+                    branch = state.baseBranch.ifBlank { branch },
+                )
+            }
+
+            // 2. The disk cache, which now carries the SHA it was fetched at.
+            container.repoCache.getFileRecord(repoFull, branch, path)?.let { cached ->
+                container.workspace.recordBaseSha(owner, name, path, cached.sha, branch)
+                val file = dev.chimeraant.berryforge.data.github.RepoFile(
+                    repo = repoFull,
+                    path = path,
+                    sha = cached.sha,
+                    text = cached.text,
+                    branch = branch,
+                )
+                container.workspace.storeFetched(owner, name, file)
+                return file
+            }
         }
+
+        // 3. GitHub.
         val fetched = container.api.readFile(owner, name, path, branch)
         container.repoCache.putFile(repoFull, branch, path, fetched.sha, fetched.text)
         container.workspace.storeFetched(owner, name, fetched)
         return fetched
     }
+
+    /** True when the file has local edits that are not yet committed. */
+    suspend fun isFileDirty(owner: String, name: String, path: String): Boolean =
+        container.workspace.isDirty(owner, name, path)
 
 
 
