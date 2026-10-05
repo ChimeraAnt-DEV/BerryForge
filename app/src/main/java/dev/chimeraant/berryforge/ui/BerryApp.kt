@@ -28,6 +28,8 @@ import dev.chimeraant.berryforge.ui.design.BerryIcons
 import dev.chimeraant.berryforge.ui.screens.BuildScreen
 import dev.chimeraant.berryforge.ui.screens.AgentScreen
 import dev.chimeraant.berryforge.ui.screens.EditorScreen
+import dev.chimeraant.berryforge.ui.screens.ProfileScreen
+import dev.chimeraant.berryforge.ui.screens.TerminalScreen
 import dev.chimeraant.berryforge.ui.screens.SettingsScreen
 import dev.chimeraant.berryforge.ui.screens.ToolchainWizardScreen
 import dev.chimeraant.berryforge.ui.screens.FileTreeScreen
@@ -48,6 +50,7 @@ fun BerryApp(viewModel: BerryViewModel) {
     var destination by remember { mutableStateOf(Destination.Repos) }
     var openFilePath by remember { mutableStateOf<String?>(null) }
     var showWizard by remember { mutableStateOf(false) }
+    var showProfile by remember { mutableStateOf(false) }
     var jumpToLine by remember { mutableStateOf<Int?>(null) }
     val onboardingDone by viewModel.onboardingDone.collectAsStateWithLifecycle()
     val toolchainReady by viewModel.toolchainReady.collectAsStateWithLifecycle()
@@ -88,14 +91,14 @@ fun BerryApp(viewModel: BerryViewModel) {
                                     ReposScreen(
                                         viewModel = viewModel,
                                         onOpenRepo = { viewModel.openRepo(it) },
-                                        onProfileClick = { destination = Destination.Settings },
+                                        onProfileClick = { showProfile = true },
                                     )
                                 } else {
                                     FileTreeScreen(
                                         viewModel = viewModel,
                                         onOpenFile = { openFilePath = it },
                                         onBack = { viewModel.closeRepo() },
-                                        onProfileClick = { destination = Destination.Settings },
+                                        onProfileClick = { showProfile = true },
                                     )
                                 }
                             }
@@ -106,7 +109,7 @@ fun BerryApp(viewModel: BerryViewModel) {
                                     jumpToLine = line
                                     openFilePath = path
                                 },
-                                onProfileClick = { destination = Destination.Settings },
+                                onProfileClick = { showProfile = true },
                             )
 
                             dest == Destination.Editor -> {
@@ -123,20 +126,25 @@ fun BerryApp(viewModel: BerryViewModel) {
                                         viewModel = viewModel,
                                         onOpenFile = { openFilePath = it },
                                         onBack = { destination = Destination.Repos },
-                                        onProfileClick = { destination = Destination.Settings },
+                                        onProfileClick = { showProfile = true },
                                     )
                                 }
                             }
 
+                            dest == Destination.Terminal -> TerminalScreen(
+                                viewModel = viewModel,
+                                onProfileClick = { showProfile = true },
+                            )
+
                             dest == Destination.Agent -> AgentScreen(
                                 viewModel = viewModel,
-                                onProfileClick = { destination = Destination.Settings },
+                                onProfileClick = { showProfile = true },
                             )
 
                             dest == Destination.Settings -> SettingsScreen(
                                 viewModel = viewModel,
                                 onOpenWizard = { showWizard = true },
-                                onProfileClick = { destination = Destination.Settings },
+                                onProfileClick = { showProfile = true },
                             )
 
                             else -> BerryEmptyState(
