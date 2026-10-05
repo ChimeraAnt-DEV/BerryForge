@@ -66,13 +66,10 @@ class AppContainer(private val context: Context) {
     val tunnels: TunnelManager by lazy { TunnelManager(context, settings, secure) }
 
     /**
-     * The loopback HTTP server hosting the MCP endpoint. Bound to the port from Settings
-     * at first use, so nothing opens a socket until the user turns the MCP server on.
+     * The loopback HTTP server hosting the MCP endpoint.
+     *
+     * Created eagerly with the container but not bound until [McpHttpServer.start] is
+     * called, so no socket is open until the user turns the server on.
      */
-    val mcpHttpServer: McpHttpServer by lazy {
-        McpHttpServer(
-            port = kotlinx.coroutines.runBlocking { settings.mcpPort.first() },
-            handler = mcpServer,
-        )
-    }
+    val mcpHttpServer: McpHttpServer by lazy { McpHttpServer(mcpServer) }
 }

@@ -33,6 +33,20 @@ enum class Destination(val label: String) {
     Settings("Settings"),
 }
 
+/**
+ * Lifecycle of the MCP server, owned by the UI layer.
+ *
+ * The server previously reported success optimistically, so a bind failure still showed
+ * as running. This models the real outcome instead: [Failed] carries the reason, and
+ * [Running] carries the port that was actually bound.
+ */
+sealed interface McpStatus {
+    data object Stopped : McpStatus
+    data object Starting : McpStatus
+    data class Running(val port: Int, val localUrl: String) : McpStatus
+    data class Failed(val message: String) : McpStatus
+}
+
 /** Sign-in progress for the device flow. */
 sealed interface SignInState {
     data object Idle : SignInState
@@ -89,6 +103,9 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
         MutableStateFlow<List<dev.chimeraant.berryforge.session.ApprovalRequest>>(emptyList())
     val pendingApprovals: StateFlow<List<dev.chimeraant.berryforge.session.ApprovalRequest>> =
         _pendingApprovals.asStateFlow()
+
+    private val _mcpStatus = MutableStateFlow<McpStatus>(McpStatus.Stopped)
+    val mcpStatus: StateFlow<McpStatus> = _mcpStatus.asStateFlow()
 
     val commitFlow get() = container.commitFlow
     val gradle get() = container.gradle
@@ -377,18 +394,38 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
     /** Copies the live MCP endpoint to the clipboard. */
     fun copyEndpoint(endpoint: String?) = copyText(endpoint.orEmpty(), "Endpoint copied.")
 
-    /** Starts the MCP server and, per settings, its tunnel. */
+    /**
+     * Starts the MCP server and, per settings, its tunnel.
+     *
+     * The bind result drives the status: the UI no longer assumes success, so a port
+     * already in use surfaces as a visible failure instead of a green "Running".
+     */
     fun startMcp() {
+        if (_mcpStatus.value is McpStatus.Starting || _mcpStatus.value is McpStatus.Running) return
         viewModelScope.launch {
+            _mcpStatus.value = McpStatus.Starting
             val port = container.settings.mcpPort.first()
             val token = container.secure.mcpTokenOrCreate()
-            container.shellEnv.ensureShims(port, token)
-            container.mcpHttpServer.start()
-                .onSuccess { actual ->
+            runCatching { container.shellEnv.ensureShims(port, token) }
+
+            container.mcpHttpServer.start(port)
+                .onSuccess { actualPort ->
+                    _mcpStatus.value = McpStatus.Running(actualPort, "http://127.0.0.1:$actualPort")
                     dev.chimeraant.berryforge.mcp.McpTunnelService.start(container.appContext)
-                    container.tunnels.start(actual)
+                    container.tunnels.start(actualPort)
                 }
-                .onFailure { toast(it.message ?: "Could not start the MCP server.") }
+                .onFailure { error ->
+                    val message = when {
+                        error.message?.contains("EADDRINUSE", ignoreCase = true) == true ||
+                            error.message?.contains("Address already in use", ignoreCase = true) == true ->
+                            "Port $port is already in use. Choose a different port below."
+                        error.message?.contains("Permission denied", ignoreCase = true) == true ->
+                            "Port $port requires elevated privileges. Choose a port above 1024."
+                        else -> error.message ?: "Could not bind the MCP server."
+                    }
+                    _mcpStatus.value = McpStatus.Failed(message)
+                    toast(message)
+                }
         }
     }
 
@@ -396,6 +433,7 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
         container.tunnels.stop()
         container.mcpHttpServer.stop()
         dev.chimeraant.berryforge.mcp.McpTunnelService.stop(container.appContext)
+        _mcpStatus.value = McpStatus.Stopped
     }
 
     /**

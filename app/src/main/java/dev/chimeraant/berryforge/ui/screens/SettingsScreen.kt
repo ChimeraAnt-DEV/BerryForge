@@ -35,6 +35,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chimeraant.berryforge.data.settings.SettingsStore
 import dev.chimeraant.berryforge.data.settings.TunnelMode
 import dev.chimeraant.berryforge.mcp.TunnelState
+import dev.chimeraant.berryforge.ui.McpStatus
 import dev.chimeraant.berryforge.ui.BerryViewModel
 import dev.chimeraant.berryforge.ui.components.BerryButton
 import dev.chimeraant.berryforge.ui.components.BerryButtonSize
@@ -96,7 +97,8 @@ fun SettingsScreen(
     var terminalFont by remember { mutableStateOf("13") }
     var wordWrap by remember { mutableStateOf(false) }
     var toolchainReady by remember { mutableStateOf(false) }
-    var serverRunning by remember { mutableStateOf(viewModel.mcpHttpServer.isRunning) }
+    val mcpStatus by viewModel.mcpStatus.collectAsStateWithLifecycle()
+    val serverRunning = mcpStatus is McpStatus.Running || mcpStatus is McpStatus.Starting
 
     LaunchedEffect(Unit) {
         llmEndpoint = viewModel.settings.llmEndpoint.first()
@@ -209,34 +211,63 @@ fun SettingsScreen(
             ) {
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        val running = mcpStatus is McpStatus.Running
+                        val starting = mcpStatus is McpStatus.Starting
+                        val failed = mcpStatus is McpStatus.Failed
+                        val statusColor = when {
+                            running -> BerryColors.Success
+                            failed -> BerryColors.Danger
+                            starting -> BerryColors.Warning
+                            else -> BerryColors.TextDisabled
+                        }
                         Box(
                             Modifier
                                 .size(9.dp)
                                 .clip(RoundedCornerShape(BerryRadius.pill))
-                                .background(if (serverRunning) BerryColors.Success else BerryColors.TextDisabled),
+                                .background(statusColor),
                         )
                         Spacer(Modifier.width(BerrySpacing.sm))
                         Text(
-                            if (serverRunning) "Running" else "Stopped",
+                            when (mcpStatus) {
+                                is McpStatus.Running -> "Running on port ${(mcpStatus as McpStatus.Running).port}"
+                                is McpStatus.Starting -> "Starting…"
+                                is McpStatus.Failed -> "Failed to start"
+                                else -> "Stopped"
+                            },
                             style = BerryType.BodyStrong,
-                            color = if (serverRunning) BerryColors.Success else BerryColors.TextSecondary,
+                            color = statusColor,
                         )
                         Spacer(Modifier.weight(1f))
                         BerryButton(
                             text = if (serverRunning) "Stop" else "Start",
                             onClick = {
-                                if (serverRunning) {
-                                    viewModel.stopMcp()
-                                    serverRunning = false
-                                } else {
-                                    viewModel.startMcp()
-                                    serverRunning = true
-                                }
+                                if (serverRunning) viewModel.stopMcp() else viewModel.startMcp()
                             },
                             variant = if (serverRunning) BerryButtonVariant.Danger else BerryButtonVariant.Primary,
                             size = BerryButtonSize.Sm,
                             icon = if (serverRunning) BerryIcons.Close else BerryIcons.Play,
                         )
+                    }
+
+                    // Surface the real bind failure rather than silently showing Stopped.
+                    (mcpStatus as? McpStatus.Failed)?.let { failure ->
+                        Spacer(Modifier.height(BerrySpacing.md))
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(BerryRadius.md))
+                                .background(BerryColors.Danger.copy(alpha = 0.12f))
+                                .padding(BerrySpacing.md),
+                            verticalAlignment = Alignment.Top,
+                        ) {
+                            BerryIcon(BerryIcons.Alert, null, size = BerrySize.iconSm, tint = BerryColors.Danger)
+                            Spacer(Modifier.width(BerrySpacing.sm))
+                            Text(
+                                failure.message,
+                                style = BerryType.Caption,
+                                color = BerryColors.Danger,
+                            )
+                        }
                     }
 
                     val endpoint = (tunnelState as? TunnelState.Up)?.publicUrl
@@ -245,18 +276,27 @@ fun SettingsScreen(
                         Text("PUBLIC ENDPOINT", style = BerryType.Overline, color = BerryColors.TextTertiary)
                         Spacer(Modifier.height(BerrySpacing.xs))
                         CopyRow(label = endpoint) { viewModel.copyEndpoint(endpoint) }
-                    } else if (serverRunning) {
+                    } else if (mcpStatus is McpStatus.Running) {
+                        // With no tunnel the server is still reachable on loopback; show
+                        // that URL so the user can verify it from a local terminal.
+                        Spacer(Modifier.height(BerrySpacing.md))
+                        Text("LOCAL ENDPOINT", style = BerryType.Overline, color = BerryColors.TextTertiary)
+                        Spacer(Modifier.height(BerrySpacing.xs))
+                        val localUrl = (mcpStatus as McpStatus.Running).localUrl
+                        CopyRow(label = localUrl) { viewModel.copyText(localUrl, "Local URL copied.") }
                         Spacer(Modifier.height(BerrySpacing.sm))
                         Text(
                             when (val current = tunnelState) {
                                 is TunnelState.Starting -> "Starting tunnel: ${current.detail}"
                                 is TunnelState.Failed -> "Tunnel failed: ${current.message}"
-                                is TunnelState.Off -> "Tunnel off. Local only: http://127.0.0.1:${mcpPort}"
-                                else -> "Waiting for the tunnel…"
+                                else -> "No public tunnel. Enable one below to reach this from OpenHands."
                             },
                             style = BerryType.Caption,
                             color = if (tunnelState is TunnelState.Failed) BerryColors.Danger else BerryColors.TextTertiary,
                         )
+                    } else if (mcpStatus is McpStatus.Starting) {
+                        Spacer(Modifier.height(BerrySpacing.sm))
+                        Text("Binding the local port…", style = BerryType.Caption, color = BerryColors.TextTertiary)
                     }
 
                     Spacer(Modifier.height(BerrySpacing.md))

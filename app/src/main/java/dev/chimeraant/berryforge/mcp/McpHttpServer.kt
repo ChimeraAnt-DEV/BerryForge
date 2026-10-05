@@ -34,7 +34,6 @@ import java.nio.charset.StandardCharsets
  * Every route except /health requires `Authorization: Bearer <token>`.
  */
 class McpHttpServer(
-    private val port: Int,
     private val handler: McpServer,
 ) {
 
@@ -45,17 +44,38 @@ class McpHttpServer(
     @Volatile
     private var running = false
 
+    @Volatile
+    private var boundPort: Int = 0
+
     val isRunning: Boolean get() = running
 
-    fun start(): Result<Int> = runCatching {
-        if (running) return@runCatching port
+    /** The port actually bound, or 0 when stopped. */
+    val port: Int get() = boundPort
+
+    /**
+     * Binds the server to loopback on [port].
+     *
+     * The port is a parameter rather than a constructor value so the caller never has to
+     * read a preference synchronously (which previously meant a `runBlocking` on the
+     * main thread). The bind happens inline so the caller gets the real result — a
+     * failure to bind, such as the port already being in use, is returned rather than
+     * being lost in a background coroutine.
+     */
+    fun start(port: Int): Result<Int> = runCatching {
+        if (running) return@runCatching boundPort
         val socket = ServerSocket()
         socket.reuseAddress = true
         socket.bind(java.net.InetSocketAddress(InetAddress.getByName("127.0.0.1"), port))
         serverSocket = socket
+        boundPort = socket.localPort
         running = true
         acceptJob = scope.launch { acceptLoop(socket) }
-        socket.localPort
+        Log.i(TAG, "MCP server bound to 127.0.0.1:$boundPort")
+        boundPort
+    }.onFailure { error ->
+        Log.e(TAG, "MCP server failed to bind on port $port", error)
+        running = false
+        boundPort = 0
     }
 
     fun stop() {
@@ -63,6 +83,7 @@ class McpHttpServer(
         runCatching { serverSocket?.close() }
         acceptJob?.cancel()
         serverSocket = null
+        boundPort = 0
     }
 
     private suspend fun acceptLoop(socket: ServerSocket) {
