@@ -45,6 +45,7 @@ import dev.chimeraant.berryforge.ui.components.BerryButtonSize
 import dev.chimeraant.berryforge.ui.components.BerryButtonVariant
 import dev.chimeraant.berryforge.ui.components.BerryChip
 import dev.chimeraant.berryforge.ui.components.BerryDivider
+import dev.chimeraant.berryforge.ui.components.BerryDropdown
 import dev.chimeraant.berryforge.ui.components.BerryIcon
 import dev.chimeraant.berryforge.ui.components.BerryIconButton
 import dev.chimeraant.berryforge.ui.components.BerrySectionHeader
@@ -163,7 +164,8 @@ fun SettingsScreen(
                         viewModel.toast("Model set to $it.")
                     }
                 },
-                loadModels = { viewModel.aiReview.listModels() },
+                loadModels = { viewModel.aiReview.modelsForPicker() },
+                loadFromEndpoint = { viewModel.aiReview.listModels() },
             )
             Spacer(Modifier.height(BerrySpacing.md))
             BerryTextField(
@@ -632,56 +634,78 @@ fun SettingsScreen(
 /**
  * Model chooser.
  *
- * Populates from the configured endpoint's `GET /models`. Many OpenAI-compatible
- * endpoints do not implement that route, so the free-text field is always available as
- * a fallback rather than the user being stuck when the fetch fails.
+ * Loads the endpoint's model list automatically, so opening Settings shows a usable
+ * dropdown immediately rather than a text field that only becomes a list after a
+ * separate button press.
+ *
+ * The list is never empty: if the endpoint cannot be reached or does not implement
+ * `GET /models`, a curated set of well-known ids is shown instead, and the footer says
+ * where the list came from. Typing is still available, but as an explicit mode rather
+ * than the default — previously the text field *was* the control until you pressed
+ * "Refresh list", which read as a broken dropdown.
  */
 @Composable
 private fun ModelPicker(
     current: String,
     onSelect: (String) -> Unit,
-    loadModels: suspend () -> Result<List<String>>,
+    loadModels: suspend () -> List<String>,
+    loadFromEndpoint: suspend () -> Result<List<String>>,
 ) {
     val scope = rememberCoroutineScope()
     var models by remember { mutableStateOf<List<String>>(emptyList()) }
-    var loading by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var expanded by remember { mutableStateOf(false) }
-    var manual by remember { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(true) }
+    var fromEndpoint by remember { mutableStateOf(false) }
+    var typedMode by remember { mutableStateOf(false) }
     var draft by remember(current) { mutableStateOf(current) }
+
+    LaunchedEffect(Unit) {
+        val result = loadFromEndpoint()
+        fromEndpoint = result.isSuccess
+        models = loadModels()
+        loading = false
+    }
 
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("MODEL", style = BerryType.Overline, color = BerryColors.TextTertiary)
             Spacer(Modifier.weight(1f))
-            BerryButton(
-                text = if (loading) "Loading…" else "Refresh list",
-                onClick = {
-                    loading = true
-                    error = null
-                    scope.launch {
-                        loadModels()
-                            .onSuccess { models = it; expanded = true; manual = false }
-                            .onFailure { error = it.message ?: "Could not list models."; manual = true }
-                        loading = false
-                    }
-                },
-                variant = BerryButtonVariant.Ghost,
-                size = BerryButtonSize.Sm,
-                icon = BerryIcons.Refresh,
-                enabled = !loading,
-            )
-            BerryButton(
-                text = if (manual) "Use list" else "Type it",
-                onClick = { manual = !manual },
-                variant = BerryButtonVariant.Ghost,
-                size = BerryButtonSize.Sm,
-            )
+            if (typedMode) {
+                BerryButton(
+                    text = "Use list",
+                    onClick = { typedMode = false },
+                    variant = BerryButtonVariant.Ghost,
+                    size = BerryButtonSize.Sm,
+                    icon = BerryIcons.Layers,
+                )
+            } else {
+                BerryButton(
+                    text = "Type it",
+                    onClick = { typedMode = true },
+                    variant = BerryButtonVariant.Ghost,
+                    size = BerryButtonSize.Sm,
+                    icon = BerryIcons.Pencil,
+                )
+                BerryButton(
+                    text = if (loading) "Loading…" else "Refresh",
+                    onClick = {
+                        loading = true
+                        scope.launch {
+                            val result = loadFromEndpoint()
+                            fromEndpoint = result.isSuccess
+                            models = loadModels()
+                            loading = false
+                        }
+                    },
+                    variant = BerryButtonVariant.Ghost,
+                    size = BerryButtonSize.Sm,
+                    icon = BerryIcons.Refresh,
+                    enabled = !loading,
+                )
+            }
         }
         Spacer(Modifier.height(BerrySpacing.sm))
 
-        if (manual || models.isEmpty()) {
-            // Free-text fallback, also the default until a list has been fetched.
+        if (typedMode) {
             BerryTextField(
                 value = draft,
                 onValueChange = {
@@ -692,84 +716,31 @@ private fun ModelPicker(
                 icon = BerryIcons.Robot,
                 modifier = Modifier.fillMaxWidth(),
                 mono = true,
-                helper = error
-                    ?: "The endpoint did not advertise its models. Enter the model name directly.",
+                helper = "Enter any model id your endpoint accepts.",
             )
         } else {
-            // Dropdown of what the endpoint actually offers.
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(BerryRadius.md))
-                    .background(BerryColors.Surface2)
-                    .border(BerrySize.hairline, BerryColors.Outline, RoundedCornerShape(BerryRadius.md)),
-            ) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable { expanded = !expanded }
-                        .padding(BerrySpacing.md),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    BerryIcon(BerryIcons.Robot, null, size = BerrySize.iconSm, tint = BerryColors.Ai)
-                    Spacer(Modifier.width(BerrySpacing.sm))
+            BerryDropdown(
+                items = models,
+                selected = current.takeIf { it.isNotBlank() },
+                labelOf = { it },
+                onSelect = onSelect,
+                leadingIcon = BerryIcons.Robot,
+                accent = BerryColors.Ai,
+                placeholder = if (loading) "Loading models…" else "Choose a model",
+                emptyMessage = "No models available",
+                emptyHint = "Use Type it to enter a model id manually.",
+                footer = {
                     Text(
-                        current.ifBlank { "Choose a model" },
-                        style = BerryType.CodeSmall,
-                        color = BerryColors.TextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
+                        if (fromEndpoint) {
+                            "Listed from your endpoint."
+                        } else {
+                            "Your endpoint did not return a model list, so common ids are shown."
+                        },
+                        style = BerryType.Caption,
+                        color = if (fromEndpoint) BerryColors.TextTertiary else BerryColors.Warning,
                     )
-                    Text("${models.size}", style = BerryType.Micro, color = BerryColors.TextDisabled)
-                    Spacer(Modifier.width(BerrySpacing.sm))
-                    BerryIcon(
-                        if (expanded) BerryIcons.ChevronUp else BerryIcons.ChevronDown,
-                        null,
-                        size = BerrySize.iconSm,
-                        tint = BerryColors.TextTertiary,
-                    )
-                }
-                AnimatedVisibility(visible = expanded) {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 260.dp)
-                            .verticalScroll(rememberScrollState()),
-                    ) {
-                        BerryDivider()
-                        models.forEach { id ->
-                            val selected = id == current
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .background(
-                                        if (selected) BerryColors.Ai.copy(alpha = 0.12f)
-                                        else androidx.compose.ui.graphics.Color.Transparent,
-                                    )
-                                    .clickable {
-                                        onSelect(id)
-                                        expanded = false
-                                    }
-                                    .padding(horizontal = BerrySpacing.md, vertical = BerrySpacing.sm),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    id,
-                                    style = BerryType.CodeSmall,
-                                    color = if (selected) BerryColors.Ai else BerryColors.TextSecondary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                if (selected) {
-                                    BerryIcon(BerryIcons.Check, null, size = 13.dp, tint = BerryColors.Ai)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+                },
+            )
         }
     }
 }

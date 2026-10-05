@@ -70,11 +70,39 @@ class AiReviewService(
     fun hasKey(): Boolean = !secure.llmApiKey.isNullOrBlank()
 
     /**
-     * Fetches the model ids the configured endpoint advertises.
+     * Models offered when the endpoint cannot be reached or does not implement
+     * `GET /models`.
+     *
+     * Without this the picker had nothing to show offline, and because it degraded to a
+     * bare text field the user could not tell whether the list was empty or the control
+     * was broken. These are well-known ids from the major OpenAI-compatible providers.
+     */
+    fun suggestedModels(): List<String> = listOf(
+        "gpt-4o-mini",
+        "gpt-4o",
+        "gpt-4.1-mini",
+        "gpt-4.1",
+        "o4-mini",
+        "claude-3-5-sonnet-latest",
+        "claude-3-5-haiku-latest",
+        "gemini-2.0-flash",
+        "gemini-1.5-pro",
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "mixtral-8x7b-32768",
+        "qwen2.5-coder-32b-instruct",
+        "deepseek-chat",
+        "deepseek-coder",
+    )
+
+    /**
+     * Fetches the model ids the configured endpoint advertises, falling back to
+     * [suggestedModels] when it cannot be reached.
      *
      * OpenAI-compatible endpoints expose `GET /models` returning `{"data":[{"id":...}]}`.
-     * Not every endpoint implements it, so a failure here is expected and non-fatal: the
-     * UI falls back to free-text entry rather than blocking the user.
+     * Many do not implement it — local llama.cpp, some proxies — so a failure here is
+     * expected rather than exceptional, and returning the suggestions keeps the picker
+     * useful instead of empty.
      */
     suspend fun listModels(): Result<List<String>> = withContext(Dispatchers.IO) {
         runCatching {
@@ -100,6 +128,7 @@ class AiReviewService(
                         }.getOrNull()
                     }
                     ?.filter { it.isNotBlank() }
+                    ?.distinct()
                     ?.sorted()
                     ?: emptyList()
                 if (ids.isEmpty()) error("The endpoint returned no models.")
@@ -107,6 +136,14 @@ class AiReviewService(
             }
         }
     }
+
+    /**
+     * The list the picker should display: what the endpoint advertises when it can be
+     * reached, otherwise the suggestions. Never empty, so the dropdown always has
+     * something to show.
+     */
+    suspend fun modelsForPicker(): List<String> =
+        listModels().getOrElse { suggestedModels() }
 
     suspend fun endpoint(): String = settings.llmEndpoint.first().trimEnd('/')
 
