@@ -145,7 +145,8 @@ fun EditorScreen(
 
     val dirty = text != originalText
 
-    Column(modifier.fillMaxSize().background(BerryColors.Base).imePadding()) {
+    Box(modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().background(BerryColors.Base).imePadding()) {
         EditorHeader(
             repoName = repoValue.fullName,
             path = path,
@@ -243,11 +244,13 @@ fun EditorScreen(
         )
     }
 
-    BerrySnackbar(
-        message = viewModel.toastValue(),
-        onDismiss = { viewModel.toast(null) },
-        icon = BerryIcons.Info,
-    )
+        BerrySnackbar(
+            message = viewModel.toastValue(),
+            onDismiss = { viewModel.toast(null) },
+            icon = BerryIcons.Info,
+            modifier = Modifier.align(Alignment.TopEnd),
+        )
+    }
 
     ReviewSheet(
         visible = reviewSheetOpen,

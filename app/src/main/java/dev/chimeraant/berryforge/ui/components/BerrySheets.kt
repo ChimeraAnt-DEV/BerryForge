@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -46,6 +48,7 @@ import dev.chimeraant.berryforge.ui.design.BerryRadius
 import dev.chimeraant.berryforge.ui.design.BerrySize
 import dev.chimeraant.berryforge.ui.design.BerrySpacing
 import dev.chimeraant.berryforge.ui.design.BerryType
+import kotlinx.coroutines.delay
 
 /**
  * Bottom sheet with a drag handle, spring entrance and scrim fade.
@@ -238,7 +241,20 @@ fun BerryDialog(
     }
 }
 
-/** Lightweight transient message pinned above the navigation bar. */
+/**
+ * Transient notification, shown in the top-right corner.
+ *
+ * Replaces an earlier bottom-anchored bar that had three problems: it sat over the
+ * navigation bar, it never went away (there was no timeout at all), and it rendered the
+ * whole message so a long one wrapped to three or more lines.
+ *
+ * Now:
+ *  - anchored top-right, clear of the bottom navigation
+ *  - auto-dismisses after [autoDismissMillis] (default 3s)
+ *  - truncated to [MAX_LENGTH] characters with an ellipsis; the full text is passed to
+ *    [onExpand] so a caller can open a details sheet
+ *  - swipeable/clickable to dismiss early
+ */
 @Composable
 fun BerrySnackbar(
     message: String?,
@@ -248,22 +264,43 @@ fun BerrySnackbar(
     onAction: (() -> Unit)? = null,
     accent: Color = BerryColors.Edit,
     icon: ImageVector? = null,
+    autoDismissMillis: Long = DEFAULT_AUTO_DISMISS_MS,
+    onExpand: ((String) -> Unit)? = null,
 ) {
     val visible = message != null
+    val currentMessage = message
+
+    // Auto-dismiss. Keyed on the message so a new message restarts the timer rather than
+    // inheriting the remainder of the previous one.
+    LaunchedEffect(currentMessage) {
+        if (currentMessage != null && autoDismissMillis > 0) {
+            delay(autoDismissMillis)
+            onDismiss()
+        }
+    }
+
     AnimatedVisibility(
         visible = visible,
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = BerrySpacing.lg)
-            .navigationBarsPadding(),
-        enter = slideInVertically(initialOffsetY = { it / 2 }, animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow)) + fadeIn(tween(BerryMotion.Standard)),
-        exit = slideOutVertically(targetOffsetY = { it / 2 }, animationSpec = tween(BerryMotion.Fast)) + fadeOut(tween(BerryMotion.Fast)),
+            .statusBarsPadding()
+            .padding(top = BerrySpacing.md),
+        enter = slideInVertically(initialOffsetY = { -it / 2 }, animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow)) + fadeIn(tween(BerryMotion.Standard)),
+        exit = slideOutVertically(targetOffsetY = { -it / 2 }, animationSpec = tween(BerryMotion.Fast)) + fadeOut(tween(BerryMotion.Fast)),
     ) {
         BerrySurface(
+            modifier = Modifier.clickable {
+                // A tap reveals the full text when it was truncated, otherwise dismisses.
+                if (currentMessage != null && currentMessage.length > MAX_LENGTH && onExpand != null) {
+                    onExpand(currentMessage)
+                }
+                onDismiss()
+            },
             color = BerryColors.Surface3,
             border = BerryColors.OutlineStrong,
             radius = BerryRadius.lg,
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+            contentPadding = PaddingValues(
                 horizontal = BerrySpacing.lg,
                 vertical = BerrySpacing.md,
             ),
@@ -274,10 +311,12 @@ fun BerrySnackbar(
                     Box(Modifier.size(BerrySpacing.md))
                 }
                 Text(
-                    message ?: "",
+                    currentMessage?.let { truncate(it) }.orEmpty(),
                     style = BerryType.BodySmall,
                     color = BerryColors.TextPrimary,
-                    modifier = Modifier.weight(1f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
                 if (action != null && onAction != null) {
                     Box(Modifier.size(BerrySpacing.md))
@@ -291,6 +330,18 @@ fun BerrySnackbar(
             }
         }
     }
+}
+
+/** Maximum characters shown before an ellipsis. Keeps a notification to one short line. */
+private const val MAX_LENGTH = 60
+
+/** Default time on screen before auto-dismissal. */
+private const val DEFAULT_AUTO_DISMISS_MS = 3_000L
+
+/** Shortens a message to [MAX_LENGTH], appending an ellipsis when it was cut. */
+internal fun truncate(text: String): String {
+    val single = text.replace('\n', ' ').trim()
+    return if (single.length <= MAX_LENGTH) single else single.take(MAX_LENGTH - 1).trimEnd() + "…"
 }
 
 /**

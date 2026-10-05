@@ -105,7 +105,8 @@ fun BuildScreen(
     val running = state is BuildState.Running
     val canBuild = repo != null
 
-    Column(modifier.fillMaxSize().background(BerryColors.Base)) {
+    Box(modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().background(BerryColors.Base)) {
         BerryTopBar(
             title = "Build",
             subtitle = when (val current = state) {
@@ -274,13 +275,16 @@ fun BuildScreen(
                 }
             }
         }
-    }
+        }
 
-    BerrySnackbar(
-        message = viewModel.toastValue(),
-        onDismiss = { viewModel.toast(null) },
-        icon = BerryIcons.Info,
-    )
+        // Overlaid on the content, anchored top-right so it clears the bottom nav.
+        BerrySnackbar(
+            message = viewModel.toastValue(),
+            onDismiss = { viewModel.toast(null) },
+            icon = BerryIcons.Info,
+            modifier = Modifier.align(Alignment.TopEnd),
+        )
+    }
 
     apkSheet?.let { apk ->
         ApkSheet(

@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chimeraant.berryforge.ui.components.BerryBottomBar
@@ -163,11 +164,12 @@ fun BerryApp(viewModel: BerryViewModel) {
             }
         }
 
+        // Anchored to the top so it never overlaps the bottom navigation bar.
         BerrySnackbar(
             message = viewModel.toastValue(),
             onDismiss = { viewModel.toast(null) },
             icon = BerryIcons.Info,
-            modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter),
+            modifier = Modifier.align(Alignment.TopEnd),
         )
     }
 }
