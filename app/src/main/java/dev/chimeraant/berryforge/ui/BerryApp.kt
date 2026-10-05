@@ -28,6 +28,7 @@ import dev.chimeraant.berryforge.ui.design.BerryColors
 import dev.chimeraant.berryforge.ui.design.BerryIcons
 import dev.chimeraant.berryforge.ui.screens.BuildScreen
 import dev.chimeraant.berryforge.ui.screens.AgentScreen
+import dev.chimeraant.berryforge.ui.screens.ApkTesterScreen
 import dev.chimeraant.berryforge.ui.screens.EditorScreen
 import dev.chimeraant.berryforge.ui.screens.ManageAccountsScreen
 import dev.chimeraant.berryforge.ui.screens.ProfileScreen
@@ -54,6 +55,7 @@ fun BerryApp(viewModel: BerryViewModel) {
     var showWizard by remember { mutableStateOf(false) }
     var showProfile by remember { mutableStateOf(false) }
     var showAccounts by remember { mutableStateOf(false) }
+    var showApkTester by remember { mutableStateOf(false) }
     var jumpToLine by remember { mutableStateOf<Int?>(null) }
     val onboardingDone by viewModel.onboardingDone.collectAsStateWithLifecycle()
     val toolchainReady by viewModel.toolchainReady.collectAsStateWithLifecycle()
@@ -81,9 +83,13 @@ fun BerryApp(viewModel: BerryViewModel) {
                         label = "destination",
                     ) { (dest, file) ->
                         when {
-                            // Checked first so account management overlays whatever screen
-                            // is showing. Previously this state was set but never read, so
-                            // the Manage accounts button did nothing at all.
+                            showApkTester -> ApkTesterScreen(
+                                viewModel = viewModel,
+                                onBack = { showApkTester = false },
+                            )
+                            // Checked before the rest so account management overlays
+                            // whatever screen is showing. Previously this state was set but
+                            // never read, so the Manage accounts button did nothing.
                             showAccounts -> ManageAccountsScreen(
                                 viewModel = viewModel,
                                 onBack = { showAccounts = false },
@@ -122,6 +128,7 @@ fun BerryApp(viewModel: BerryViewModel) {
                                     jumpToLine = line
                                     openFilePath = path
                                 },
+                                onOpenApkTester = { showApkTester = true },
                                 onProfileClick = { showProfile = true },
                                         onManageAccounts = { showAccounts = true },
                             )

@@ -73,6 +73,7 @@ fun BuildScreen(
     onOpenFileAtLine: (path: String, line: Int) -> Unit,
     onProfileClick: () -> Unit,
     onManageAccounts: () -> Unit = {},
+    onOpenApkTester: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.gradle.state.collectAsStateWithLifecycle()
@@ -181,6 +182,13 @@ fun BuildScreen(
                 variant = BerryButtonVariant.Ghost,
                 icon = BerryIcons.Trash,
                 enabled = canBuild && !running,
+            )
+            // Test what you built without leaving the app.
+            BerryIconButton(
+                BerryIcons.Layers,
+                "Test built APKs",
+                onClick = onOpenApkTester,
+                tint = BerryColors.Edit,
             )
         }
 

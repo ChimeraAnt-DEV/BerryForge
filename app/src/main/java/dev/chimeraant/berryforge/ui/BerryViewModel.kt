@@ -113,6 +113,7 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
 
     val commitFlow get() = container.commitFlow
     val gradle get() = container.gradle
+    val apkRepository get() = container.apkRepository
     val toolchain get() = container.toolchain
     val sessions get() = container.sessions
     val mcp get() = container.mcpServer

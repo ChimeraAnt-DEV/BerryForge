@@ -2,6 +2,7 @@ package dev.chimeraant.berryforge.core
 
 import android.content.Context
 import dev.chimeraant.berryforge.ai.AiReviewService
+import dev.chimeraant.berryforge.build.ApkRepository
 import dev.chimeraant.berryforge.build.BuildLogParser
 import dev.chimeraant.berryforge.build.GradleRunner
 import dev.chimeraant.berryforge.build.ToolchainInstaller
@@ -44,6 +45,7 @@ class AppContainer(private val context: Context) {
     val toolchain: ToolchainInstaller by lazy { ToolchainInstaller(context) }
     val gradle: GradleRunner by lazy { GradleRunner(context, toolchain) }
     val buildLogs: BuildLogParser by lazy { BuildLogParser() }
+    val apkRepository: ApkRepository by lazy { ApkRepository(context) }
 
     val shellEnv: ShellEnvironment by lazy { ShellEnvironment(context, toolchain) }
     val sessions: SessionRecorder by lazy { SessionRecorder(context, workspace) }
