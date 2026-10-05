@@ -242,7 +242,7 @@ private fun ProfileChipSurface(
             .clip(shape)
             .background(BerryColors.Surface3, shape)
             .border(BerrySize.hairline, borderColor, shape)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .clickable(interactionSource = interaction, indication = berryIndication(BerryColors.Edit), onClick = onClick)
             .padding(start = 3.dp, end = BerrySpacing.sm, top = 3.dp, bottom = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(BerrySpacing.xs),

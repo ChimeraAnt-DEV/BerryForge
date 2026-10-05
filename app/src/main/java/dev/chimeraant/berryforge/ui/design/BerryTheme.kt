@@ -1,10 +1,12 @@
 package dev.chimeraant.berryforge.ui.design
 
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 
 /**
  * BerryForge theme.
@@ -42,10 +44,17 @@ fun BerryTheme(content: @Composable () -> Unit) {
         large = RoundedCornerShape(BerryRadius.lg),
         extraLarge = RoundedCornerShape(BerryRadius.xl),
     )
-    MaterialTheme(
-        colorScheme = scheme,
-        typography = BerryType.material,
-        shapes = shapes,
-        content = content,
-    )
+    // Supply the branded press indication as the default. Without this, any plain
+    // `Modifier.clickable {}` falls back to Material's grey ripple, which does not match
+    // the palette — and the explicit controls had no feedback at all.
+    CompositionLocalProvider(
+        LocalIndication provides dev.chimeraant.berryforge.ui.components.berryIndication(),
+    ) {
+        MaterialTheme(
+            colorScheme = scheme,
+            typography = BerryType.material,
+            shapes = shapes,
+            content = content,
+        )
+    }
 }

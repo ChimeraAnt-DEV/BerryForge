@@ -199,7 +199,11 @@ fun BerryButton(
             .scale(if (pressed) 0.975f else 1f)
             .clickable(
                 interactionSource = interaction,
-                indication = null,
+                // Was null, which removed all press feedback: a tap produced no visual
+                // response, so users could not tell whether it registered.
+                indication = berryIndication(
+                    if (skin.container == Color.Transparent) BerryColors.Edit else skin.container,
+                ),
                 enabled = enabled,
                 onClick = onClick,
             )
@@ -276,7 +280,7 @@ fun BerryIconButton(
             .size(containerSize)
             .clip(RoundedCornerShape(BerryRadius.sm))
             .background(bg)
-            .clickable(interactionSource = interaction, indication = null, enabled = enabled, onClick = onClick)
+            .clickable(interactionSource = interaction, indication = berryIndication(activeTint ?: BerryColors.Edit), enabled = enabled, onClick = onClick)
             .alpha(if (enabled) 1f else 0.6f),
         contentAlignment = Alignment.Center,
     ) {
