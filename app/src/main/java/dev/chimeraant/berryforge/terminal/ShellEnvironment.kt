@@ -28,12 +28,35 @@ class ShellEnvironment(
     /** The shell used for interactive sessions and for the MCP `run_tests` tool. */
     val shell: String = "/system/bin/sh"
 
-    fun ensureShims(bridgePort: Int, bearerToken: String) {
+    /**
+     * Writes the shell's `bin` directory.
+     *
+     * ## What is deliberately not here
+     *
+     * Earlier versions installed `git` and `curl` shims that POSTed to
+     * `http://127.0.0.1:<port>/shell/git` and `/shell/curl`. Those endpoints were never
+     * implemented, and the scripts had two further faults: they invoked `python3`, which
+     * Android does not ship, and read `$BERRYFORGE_CURL`, an environment variable nothing
+     * ever set. They could not have worked.
+     *
+     * Rather than ship scripts that fail confusingly, `git` and `curl` are simply not
+     * provided, and the terminal says so. Android has no `git` and no `curl`; a real
+     * implementation would need the actual binaries shipped inside the APK, which is the
+     * same packaging change the JDK needs (see GradleRunner's note on W^X).
+     *
+     * `gradle` is still shimmed because it only needs to find `gradlew`, which does exist.
+     */
+    fun ensureShims() {
+        val bin = File(home, "bin").apply { mkdirs() }
+
         writeShim("gradle", gradleShim())
-        writeShim("git", gitShim(bridgePort, bearerToken))
-        writeShim("curl", curlShim(bridgePort, bearerToken))
         writeShim("berryforge", berryShim())
-        writeProfile(bridgePort)
+
+        // Remove the broken shims if an earlier version left them behind, so the user
+        // gets "command not found" rather than a script that fails on a missing endpoint.
+        listOf("git", "curl").forEach { stale -> runCatching { File(bin, stale).delete() } }
+
+        writeProfile()
     }
 
     private fun writeShim(name: String, body: String) {
@@ -44,38 +67,14 @@ class ShellEnvironment(
 
     private fun gradleShim(): String = """
         #!/system/bin/sh
-        # Runs the project's Gradle wrapper, falling back to the bundled distribution.
+        # Runs the project's Gradle wrapper. The wrapper is a shell script, so it is passed
+        # to the shell as an argument rather than executed directly: Android has no
+        # /bin/sh, and the wrapper's shebang points there.
         if [ -x "./gradlew" ]; then
-          exec ./gradlew "${'$'}@"
+          exec sh ./gradlew "${'$'}@"
         fi
-        if [ -x "${'$'}BERRYFORGE_GRADLE" ]; then
-          exec "${'$'}BERRYFORGE_GRADLE" "${'$'}@"
-        fi
-        echo "gradle: no ./gradlew in ${'$'}PWD and no bundled distribution" >&2
+        echo "gradle: no ./gradlew in ${'$'}PWD" >&2
         exit 127
-    """.trimIndent()
-
-    private fun gitShim(port: Int, token: String): String = """
-        #!/system/bin/sh
-        # BerryForge git shim. Delegates to the in-app GitHub bridge so the terminal can
-        # drive the same repositories the editor and MCP server use.
-        # Supported: status, diff, commit, push, pull, log, remote, branch, checkout.
-        exec "${'$'}BERRYFORGE_CURL" -sS \
-          -H "Authorization: Bearer $token" \
-          -H "Content-Type: application/json" \
-          -X POST "http://127.0.0.1:$port/shell/git" \
-          --data-binary "${'$'}(python3 -c 'import json,sys; print(json.dumps({"args": sys.argv[1:], "cwd": "'"${'$'}PWD"'"}))' "${'$'}@" 2>/dev/null || echo '{"args":[],"cwd":""}')"
-    """.trimIndent()
-
-    private fun curlShim(port: Int, token: String): String = """
-        #!/system/bin/sh
-        # BerryForge curl shim. Android has no curl, so requests are proxied through the
-        # app's own HTTP stack, which keeps TLS and proxy settings consistent.
-        exec "${'$'}BERRYFORGE_CURL" -sS \
-          -H "Authorization: Bearer $token" \
-          -H "Content-Type: application/json" \
-          -X POST "http://127.0.0.1:$port/shell/curl" \
-          --data-binary "${'$'}(python3 -c 'import json,sys; print(json.dumps({"args": sys.argv[1:]}))' "${'$'}@" 2>/dev/null || echo '{"args":[]}')"
     """.trimIndent()
 
     private fun berryShim(): String = """
@@ -84,9 +83,12 @@ class ShellEnvironment(
         echo "  JAVA_HOME=${'$'}JAVA_HOME"
         echo "  ANDROID_HOME=${'$'}ANDROID_HOME"
         echo "  workspace: ${'$'}BERRYFORGE_WORKSPACES"
+        echo ""
+        echo "Available: java, javac, jar, aapt2, d8, r8, apksigner, zipalign, adb, gradle"
+        echo "Not available: git, curl (Android ships neither; use the GitHub tools in the app)"
     """.trimIndent()
 
-    private fun writeProfile(port: Int) {
+    private fun writeProfile() {
         File(home, ".profile").writeText(
             """
             # BerryForge shell profile
@@ -102,7 +104,8 @@ class ShellEnvironment(
      * Kept explicit rather than inherited so the terminal is reproducible.
      */
     fun environment(): Map<String, String> = buildMap {
-        putAll(toolchain.environment())
+        val toolchainEnv = toolchain.environment()
+        putAll(toolchainEnv)
         put("HOME", home.absolutePath)
         put("PREFIX", home.absolutePath)
         put("BERRYFORGE_WORKSPACES", File(context.filesDir, "workspaces").absolutePath)
@@ -110,11 +113,29 @@ class ShellEnvironment(
         put("PATH", buildString {
             append(bin.absolutePath)
             append(':')
-            append(toolchain.environment()["PATH"].orEmpty())
+            append(toolchainEnv["PATH"].orEmpty())
             append(":/system/bin")
         })
         put("ENV", File(home, ".profile").absolutePath)
-        put("LD_LIBRARY_PATH", context.applicationInfo.nativeLibraryDir)
+
+        /*
+         * LD_LIBRARY_PATH must keep the toolchain's entries.
+         *
+         * This previously *replaced* the value with the app's native library directory,
+         * discarding the JDK and Termux lib paths the toolchain had set. The JVM's native
+         * dependencies then could not be found and every java invocation failed.
+         *
+         * The app's nativeLibraryDir is appended rather than substituted, so libtermux.so
+         * is still reachable while the toolchain's libraries stay on the path.
+         */
+        val toolchainLibs = toolchainEnv["LD_LIBRARY_PATH"].orEmpty()
+        val nativeDir = context.applicationInfo.nativeLibraryDir
+        put(
+            "LD_LIBRARY_PATH",
+            listOf(toolchainLibs, nativeDir)
+                .filter { it.isNotBlank() }
+                .joinToString(":"),
+        )
     }
 
     /** Command line for a login shell, used when starting a session. */

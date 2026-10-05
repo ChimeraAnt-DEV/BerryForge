@@ -50,8 +50,11 @@ class ListReposTool(
         val includeArchived = args.bool("include_archived", false)
         val query = args.str("query")?.lowercase()?.takeIf { it.isNotBlank() }
 
-        val repos = cache.getRepos("user", allowStale = false)
-            ?: api.allMyRepos().also { cache.putRepos("user", it) }
+        // Keyed by login so a multi-account setup does not serve one account's repos
+        // to another.
+        val key = "user_${api.activeLogin ?: "anonymous"}"
+        val repos = cache.getRepos(key, allowStale = false)
+            ?: api.allMyRepos().also { cache.putRepos(key, it) }
 
         val filtered = repos
             .asSequence()

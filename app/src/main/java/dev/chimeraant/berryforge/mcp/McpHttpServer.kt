@@ -90,6 +90,8 @@ class McpHttpServer(
         acceptJob?.cancel()
         serverSocket = null
         boundPort = 0
+        // Close the recorded agent session so it lands in history with its diff.
+        runCatching { handler.closeAllSessions() }
     }
 
     private suspend fun acceptLoop(socket: ServerSocket) {

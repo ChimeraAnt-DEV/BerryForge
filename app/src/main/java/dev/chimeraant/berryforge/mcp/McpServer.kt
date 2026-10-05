@@ -22,6 +22,7 @@ import dev.chimeraant.berryforge.session.SessionRecorder
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -52,7 +53,7 @@ import kotlinx.serialization.json.putJsonObject
  */
 class McpServer(
     private val context: Context,
-    api: GitHubApi,
+    private val api: GitHubApi,
     cache: RepoCache,
     workspace: EditorWorkspace,
     gradle: GradleRunner,
@@ -86,6 +87,10 @@ class McpServer(
 
     private val _initializedClients = MutableStateFlow<List<String>>(emptyList())
     val initializedClients: StateFlow<List<String>> = _initializedClients.asStateFlow()
+
+    /** Id of the session opened by the most recent initialize, or null. */
+    @Volatile
+    private var activeSessionId: String? = null
 
     /** True when the request carried a valid bearer token. */
     fun authenticate(authorizationHeader: String?): Boolean {
@@ -154,7 +159,7 @@ class McpServer(
         }
     }
 
-    private fun handleInitialize(id: JsonElement?, params: JsonObject): JsonObject {
+    private suspend fun handleInitialize(id: JsonElement?, params: JsonObject): JsonObject {
         val requested = params["protocolVersion"]?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
         val negotiated = requested?.takeIf { it in Mcp.SUPPORTED_VERSIONS } ?: Mcp.PROTOCOL_VERSION
         val clientName = params["clientInfo"]?.jsonObject?.get("name")
@@ -162,6 +167,12 @@ class McpServer(
 
         _initializedClients.value = (_initializedClients.value + clientName).distinct().takeLast(10)
         _connectionCount.value = _connectionCount.value + 1
+
+        // Start recording the session. Without this the activity feed, the change list,
+        // the approval counters and the revert history were all permanently empty — the
+        // recorder existed but nothing ever opened a session.
+        startSession(clientName)
+
         sessions.log("session", "MCP client initialised: $clientName", "protocol $negotiated", severity = "success")
 
         return Mcp.result(id, buildJsonObject {
@@ -178,6 +189,41 @@ class McpServer(
             put("instructions", SERVER_INSTRUCTIONS)
         })
     }
+
+    /**
+     * Opens a recorded session for the connecting client.
+     *
+     * The repo and branch are taken from whatever the user has open, so the recorded
+     * diff lands against the right repository.
+     */
+    private suspend fun startSession(clientName: String) {
+        val repo = runCatching {
+            val last = settings.lastRepo.first()
+            last.orEmpty()
+        }.getOrDefault("")
+        val branch = runCatching {
+            if (repo.contains('/')) {
+                val parts = repo.split('/')
+                api.repo(parts[0], parts[1]).defaultBranch
+            } else {
+                ""
+            }
+        }.getOrDefault("")
+        val sandboxed = runCatching { sandbox.isSandboxed() }.getOrDefault(true)
+        val session = sessions.begin(repo = repo, branch = branch, sandboxed = sandboxed)
+        activeSessionId = session.id
+    }
+
+    /** Closes the recorded session, if one is open. */
+    fun endSession(summary: String? = null) {
+        if (activeSessionId != null) {
+            sessions.end(summary)
+            activeSessionId = null
+        }
+    }
+
+    /** Closes any open session. Called when the server stops. */
+    fun closeAllSessions() = endSession("MCP server stopped")
 
     private fun handleToolsList(id: JsonElement?): JsonObject = Mcp.result(id, buildJsonObject {
         put("tools", buildJsonArray {
@@ -249,7 +295,7 @@ class McpServer(
     ): Boolean {
         val request = dev.chimeraant.berryforge.session.ApprovalRequest(
             label = tool.title,
-            detail = reason ?: summarizeArgs(tool.name, args),
+            detail = describeAction(tool.name, args, reason),
             path = args.str("path").orEmpty(),
             effect = tool.effect.name,
         )
@@ -266,6 +312,42 @@ class McpServer(
         }
     }
 
+    /**
+     * Builds the text the user sees at an approval gate.
+     *
+     * The previous version showed only repo and path, which is not enough to decide
+     * whether to allow a write, a commit or a build — the user could not see *what* was
+     * being written or *which* task was about to run.
+     */
+    private fun describeAction(name: String, args: JsonObject, reason: String?): String = buildString {
+        val repo = args.str("repo").orEmpty()
+        val path = args.str("path").orEmpty()
+        if (repo.isNotBlank()) appendLine("Repository: $repo")
+        if (path.isNotBlank()) appendLine("Path: $path")
+
+        when (name) {
+            "write_file" -> {
+                val content = args.str("content").orEmpty()
+                appendLine("Bytes: ${content.toByteArray().size}  Lines: ${content.lines().size}")
+                if (content.isNotBlank()) {
+                    appendLine("Preview:")
+                    appendLine(content.lines().take(PREVIEW_LINES).joinToString("\n").take(PREVIEW_CHARS))
+                    if (content.lines().size > PREVIEW_LINES) appendLine("…")
+                }
+            }
+            "commit" -> {
+                appendLine("Branch: ${args.str("branch").orEmpty()}")
+                appendLine("Message: ${args.str("message").orEmpty()}")
+                args.str("paths")?.let { appendLine("Paths: $it") }
+            }
+            "run_build", "run_tests" -> {
+                appendLine("Task: ${args.str("task") ?: "assembleDebug"}")
+            }
+            "install_apk" -> appendLine("APK: ${args.str("path").orEmpty()}")
+        }
+        if (reason != null) appendLine(reason)
+    }.trim().ifBlank { summarizeArgs(name, args) }
+
     private fun summarizeArgs(name: String, args: JsonObject): String {
         val repo = args.str("repo").orEmpty()
         val path = args.str("path").orEmpty()
@@ -278,6 +360,10 @@ class McpServer(
 
     companion object {
         private const val APPROVAL_TIMEOUT_MS = 5 * 60 * 1000L
+
+        /** How much of a write to show at an approval gate. */
+        private const val PREVIEW_LINES = 12
+        private const val PREVIEW_CHARS = 800
 
         private const val SERVER_INSTRUCTIONS = """
 BerryForge exposes a working copy of the user's GitHub repositories running on their own

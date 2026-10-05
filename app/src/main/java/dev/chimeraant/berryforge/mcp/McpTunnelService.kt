@@ -44,6 +44,13 @@ class McpTunnelService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                // Actually shut the endpoint down. The previous version only called
+                // stopSelf(), which removed the notification but left the HTTP server
+                // and the tunnel running — the endpoint stayed publicly reachable with
+                // no visible indication.
+                val container = (application as BerryForgeApp).container
+                runCatching { container.tunnels.stop() }
+                runCatching { container.mcpHttpServer.stop() }
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -130,6 +137,26 @@ class McpTunnelService : Service() {
             }
             manager.createNotificationChannel(channel)
         }
+    }
+
+    /**
+     * Android 15 caps dataSync foreground services at six hours and then calls this.
+     *
+     * Without an override the platform throws and the process is killed. The endpoint is
+     * shut down cleanly instead, and the notification says why, so the user is not left
+     * wondering why the tunnel vanished.
+     */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        val container = (application as BerryForgeApp).container
+        runCatching { container.tunnels.stop() }
+        runCatching { container.mcpHttpServer.stop() }
+        runCatching { container.sessions.log(
+            kind = "session",
+            title = "MCP endpoint stopped",
+            detail = "Android's foreground service time limit was reached. Start it again to reconnect.",
+            severity = "warn",
+        ) }
+        stopSelf()
     }
 
     override fun onDestroy() {

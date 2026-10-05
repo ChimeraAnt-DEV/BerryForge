@@ -14,13 +14,13 @@ class BerryForgeApp : Application() {
     }
 
     /** Called by the install-result receiver; records the outcome in the agent session. */
-    fun recordInstallOutcome(packageName: String, succeeded: Boolean) {
-        android.util.Log.i("BerryForgeApp", "Install outcome for $packageName: succeeded=$succeeded")
+    fun recordInstallOutcome(packageName: String, succeeded: Boolean, message: String = "") {
+        android.util.Log.i("BerryForgeApp", "Install outcome for $packageName: succeeded=$succeeded $message")
         runCatching {
             container.sessions.log(
                 kind = "tool",
                 title = if (succeeded) "APK installed" else "APK install not completed",
-                detail = packageName,
+                detail = listOf(packageName, message).filter { it.isNotBlank() }.joinToString(" · "),
                 severity = if (succeeded) "success" else "warn",
             )
         }

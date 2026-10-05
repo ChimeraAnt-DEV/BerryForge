@@ -190,9 +190,18 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
     fun signOut() {
         val login = container.secure.activeLogin
         viewModelScope.launch {
-            val token = login?.let { container.secure.tokenFor(it) }
-            if (token != null) container.auth.revoke(token)
+            // Revoke every stored token, not just the active one, and clear the mirrors.
+            // Previously only the active account was revoked and the workspaces were left
+            // on disk, so a signed-out device still held repository content.
+            container.auth.accounts.forEach { account ->
+                container.secure.tokenFor(account)?.let { token ->
+                    runCatching { container.auth.revoke(token) }
+                }
+                container.auth.signOut(account)
+            }
             if (login != null) container.auth.signOut(login)
+            container.workspace.wipeAll()
+            container.repoCache.clear()
             _signedIn.value = false
             _user.value = null
             _isOwner.value = false
@@ -204,6 +213,15 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     val accounts: List<String> get() = container.auth.accounts
+
+    /**
+     * Cache key for the repository list.
+     *
+     * Scoped by login: the previous key was the literal "user", so every account shared
+     * one entry and switching accounts showed the previous account's repositories until
+     * the network answered.
+     */
+    fun reposCacheKey(): String = "user_${container.secure.activeLogin ?: "anonymous"}"
 
     /**
      * Signs out of a single account, leaving the others intact.
@@ -334,8 +352,11 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             if (_reposLoading.value) return@launch
             _reposError.value = null
+            // Scoped by the signed-in account so switching accounts does not show the
+            // previous account's repositories.
+            val key = reposCacheKey()
             if (!force) {
-                val cached = container.repoCache.getRepos("user", allowStale = false)
+                val cached = container.repoCache.getRepos(key, allowStale = false)
                 if (cached != null) {
                     _repos.value = cached
                     return@launch
@@ -345,10 +366,10 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
             runCatching { container.api.allMyRepos() }
                 .onSuccess { list ->
                     _repos.value = list.sortedByDescending { it.pushedAt ?: it.updatedAt ?: "" }
-                    container.repoCache.putRepos("user", list)
+                    container.repoCache.putRepos(key, list)
                 }
                 .onFailure { error ->
-                    val stale = container.repoCache.getRepos("user", allowStale = true)
+                    val stale = container.repoCache.getRepos(key, allowStale = true)
                     if (stale != null) {
                         _repos.value = stale
                         _reposError.value = "Showing cached repositories. ${error.message.orEmpty()}"
@@ -510,7 +531,7 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
             _mcpStatus.value = McpStatus.Starting
             val port = container.settings.mcpPort.first()
             val token = container.secure.mcpTokenOrCreate()
-            runCatching { container.shellEnv.ensureShims(port, token) }
+            runCatching { container.shellEnv.ensureShims() }
 
             container.mcpHttpServer.start(port)
                 .onSuccess { actualPort ->

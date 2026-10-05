@@ -31,6 +31,9 @@ class GitHubApi(private val auth: GitHubAuth) {
     }
     private val jsonMedia = "application/json".toMediaType()
 
+    /** The signed-in login, used to scope caches per account. */
+    val activeLogin: String? get() = auth.activeLogin
+
     private fun token(): String =
         requireNotNull(auth.activeToken) { "Not signed in to GitHub" }
 

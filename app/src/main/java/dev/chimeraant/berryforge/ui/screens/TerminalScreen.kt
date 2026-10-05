@@ -67,7 +67,7 @@ fun TerminalScreen(
         runCatching {
             val port = kotlinx.coroutines.runBlocking { viewModel.settings.mcpPort.first() }
             val token = viewModel.secure.mcpTokenOrCreate()
-            viewModel.shellEnv.ensureShims(port, token)
+            viewModel.shellEnv.ensureShims()
             viewModel.shellEnv.environment()
         }.getOrDefault(emptyMap())
     }
