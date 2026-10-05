@@ -10,6 +10,12 @@ import dev.chimeraant.berryforge.data.github.RepoCache
 import dev.chimeraant.berryforge.data.settings.SecureStore
 import dev.chimeraant.berryforge.data.settings.SettingsStore
 import dev.chimeraant.berryforge.mcp.tools.CommitTool
+import dev.chimeraant.berryforge.mcp.tools.CreateBranchTool
+import dev.chimeraant.berryforge.mcp.tools.DeleteFileTool
+import dev.chimeraant.berryforge.mcp.tools.GetDiffTool
+import dev.chimeraant.berryforge.mcp.tools.GitStatusTool
+import dev.chimeraant.berryforge.mcp.tools.ListFilesTool
+import dev.chimeraant.berryforge.mcp.tools.SearchCodeTool
 import dev.chimeraant.berryforge.mcp.tools.GetBuildErrorsTool
 import dev.chimeraant.berryforge.mcp.tools.InstallApkTool
 import dev.chimeraant.berryforge.mcp.tools.ListReposTool
@@ -68,8 +74,14 @@ class McpServer(
 
     val tools: List<McpTool> = listOf(
         ListReposTool(api, cache),
+        ListFilesTool(api, workspace),
+        SearchCodeTool(api, workspace),
         ReadFileTool(api, cache, workspace),
         WriteFileTool(api, workspace, sessions, sandbox),
+        DeleteFileTool(workspace, sessions, sandbox),
+        GetDiffTool(commitFlow, workspace),
+        GitStatusTool(api, workspace),
+        CreateBranchTool(api),
         CommitTool(commitFlow, workspace, sessions, sandbox),
         RunBuildTool(gradle, buildLogs, workspace, sessions, sandbox),
         GetBuildErrorsTool(gradle, buildLogs),
