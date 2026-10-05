@@ -150,7 +150,7 @@ fun ProfileChip(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(BerrySpacing.xs),
     ) {
-        Avatar(user = user, size = BerrySize.avatarChip)
+        Avatar(user = user, size = BerrySize.avatarChip, isOwner = isOwner)
         if (user != null) {
             Text(
                 user.login,
@@ -192,24 +192,35 @@ fun Avatar(
     user: GhUser?,
     size: androidx.compose.ui.unit.Dp,
     modifier: Modifier = Modifier,
+    isOwner: Boolean = false,
 ) {
     val shape = RoundedCornerShape(BerryRadius.pill)
+    // Owners get a gold ring around the avatar, per the owner badge spec.
+    val ringColor = if (isOwner) BerryColors.Owner else BerryColors.OutlineStrong
+    val ringWidth = if (isOwner) 2.dp else BerrySize.hairline
     Box(
         modifier
             .size(size)
             .clip(shape)
             .background(BerryColors.Surface4)
-            .border(BerrySize.hairline, BerryColors.OutlineStrong, shape),
+            .border(ringWidth, ringColor, shape),
         contentAlignment = Alignment.Center,
     ) {
         val url = user?.avatar_url
         if (url.isNullOrBlank()) {
-            BerryIcon(BerryIcons.User, null, size = size * 0.55f, tint = BerryColors.TextTertiary)
+            BerryIcon(
+                BerryIcons.User,
+                null,
+                size = size * 0.55f,
+                tint = if (isOwner) BerryColors.Owner else BerryColors.TextTertiary,
+            )
         } else {
             AsyncImage(
                 model = url,
                 contentDescription = user?.login,
-                modifier = Modifier.size(size).clip(shape),
+                modifier = Modifier
+                    .size(if (isOwner) size - 6.dp else size)
+                    .clip(shape),
             )
         }
     }

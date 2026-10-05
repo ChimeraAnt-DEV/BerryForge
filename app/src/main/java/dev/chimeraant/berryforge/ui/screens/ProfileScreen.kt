@@ -116,7 +116,7 @@ fun ProfileScreen(
                 Modifier.fillMaxWidth().padding(BerrySpacing.xl),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Avatar(user = user, size = BerrySize.avatarLg)
+                Avatar(user = user, size = BerrySize.avatarLg, isOwner = isOwner)
                 Spacer(Modifier.width(BerrySpacing.lg))
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {

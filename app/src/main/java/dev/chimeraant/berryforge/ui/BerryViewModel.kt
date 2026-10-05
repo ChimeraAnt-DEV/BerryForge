@@ -218,34 +218,61 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
     // ---- Profile / owner badge ----
 
     /**
-     * Resolves the owner badge from /user/orgs, cached for a day.
+     * Resolves the owner badge.
      *
-     * This is a client-side cosmetic check against the org list GitHub returns for the
-     * signed-in user. It is never presented as server-verified authorisation, and the UI
-     * labels it as a client-side badge.
+     * There are two ways to qualify, and both are needed:
+     *
+     *  1. The signed-in login *is* [SettingsStore.OWNER_ORG]. This is the case that
+     *     matters today: ChimeraAnt-DEV is a GitHub **user** account, not an
+     *     organisation, so `GET /user/orgs` returns an empty list for it and the
+     *     membership check alone can never succeed.
+     *  2. The signed-in account is a member of [SettingsStore.OWNER_ORG], which covers
+     *     the case where it is an organisation (or becomes one).
+     *
+     * The result is cached for a day. This is a client-side cosmetic check against data
+     * GitHub returns for the signed-in user; it is never presented as server-verified
+     * authorisation.
      */
     fun refreshOwnerStatus(force: Boolean = false) {
         viewModelScope.launch {
+            val login = container.secure.activeLogin
             val cachedAt = container.settings.ownerCacheAt.first()
             val cached = container.settings.ownerCache.first()
-            val fresh = System.currentTimeMillis() - cachedAt < 24 * 60 * 60 * 1000L
-            if (!force && fresh && cached != null) {
-                applyOrgCache(cached)
+            val fresh = System.currentTimeMillis() - cachedAt < OWNER_CACHE_TTL_MS
+            val hasCache = !cached.isNullOrBlank()
+
+            if (!force && fresh && hasCache) {
+                applyOwnerStatus(login, parseOrgs(cached))
                 return@launch
             }
-            val token = container.secure.activeToken ?: return@launch
+
+            val token = container.secure.activeToken ?: run {
+                // Not signed in: the login check can still apply if we know the login.
+                applyOwnerStatus(login, emptyList())
+                return@launch
+            }
+
+            // Apply the login-based result immediately so the badge does not wait on the
+            // network, then refine it once the org list arrives.
+            applyOwnerStatus(login, emptyList())
+
             container.auth.fetchOrgs(token).onSuccess { list ->
                 val names = list.map { it.login }
                 container.settings.setOwnerCache(names.joinToString(","), System.currentTimeMillis())
-                applyOrgCache(names.joinToString(","))
+                applyOwnerStatus(login, names)
             }
         }
     }
 
-    private fun applyOrgCache(csv: String) {
-        val names = csv.split(',').map { it.trim() }.filter { it.isNotBlank() }
-        _orgs.value = names
-        _isOwner.value = names.any { it.equals(dev.chimeraant.berryforge.data.settings.SettingsStore.OWNER_ORG, ignoreCase = true) }
+    private fun parseOrgs(csv: String): List<String> =
+        csv.split(',').map { it.trim() }.filter { it.isNotBlank() }
+
+    private fun applyOwnerStatus(login: String?, orgs: List<String>) {
+        val owner = dev.chimeraant.berryforge.data.settings.SettingsStore.OWNER_ORG
+        val byLogin = login?.equals(owner, ignoreCase = true) == true
+        val byOrg = orgs.any { it.equals(owner, ignoreCase = true) }
+        _orgs.value = orgs
+        _isOwner.value = byLogin || byOrg
     }
 
     private suspend fun fetchProfile() {
@@ -491,4 +518,9 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
     /** Exposes the toast as composable state for the snackbar. */
     @Composable
     fun toastValue(): String? = toast.collectAsStateWithLifecycle().value
+
+    private companion object {
+        /** How long a resolved owner status is trusted before it is re-checked. */
+        const val OWNER_CACHE_TTL_MS = 24 * 60 * 60 * 1000L
+    }
 }
