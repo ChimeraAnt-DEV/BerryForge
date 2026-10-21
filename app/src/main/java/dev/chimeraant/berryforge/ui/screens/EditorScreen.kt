@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -59,12 +60,16 @@ import dev.chimeraant.berryforge.ui.components.BerrySheet
 import dev.chimeraant.berryforge.ui.components.BerrySnackbar
 import dev.chimeraant.berryforge.ui.components.BerrySurface
 import dev.chimeraant.berryforge.ui.components.BerryTextField
+import dev.chimeraant.berryforge.ui.components.HtmlPreviewButton
+import dev.chimeraant.berryforge.ui.components.HtmlPreviewSheet
 import dev.chimeraant.berryforge.ui.design.BerryColors
 import dev.chimeraant.berryforge.ui.design.BerryIcons
+import dev.chimeraant.berryforge.ui.design.BerryMotion
 import dev.chimeraant.berryforge.ui.design.BerryRadius
 import dev.chimeraant.berryforge.ui.design.BerrySize
 import dev.chimeraant.berryforge.ui.design.BerrySpacing
 import dev.chimeraant.berryforge.ui.design.BerryType
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -108,6 +113,8 @@ fun EditorScreen(
     var commitSheetOpen by remember { mutableStateOf(false) }
     var findQuery by remember { mutableStateOf("") }
     var replaceWith by remember { mutableStateOf("") }
+    var previewVisible by remember { mutableStateOf(false) }
+    var htmlPreviewSeen by remember { mutableStateOf(false) }
 
     // Load the file through the view model, which resolves mirror -> cache -> GitHub and
     // records the blob SHA at every step so a later commit has a base to update against.
@@ -146,6 +153,11 @@ fun EditorScreen(
     }
     LaunchedEffect(Unit) {
         viewModel.settings.tabWidth.collect { tabWidth = it }
+    }
+    LaunchedEffect(Unit) {
+        // First time only: after the user has seen the explainer it stays dismissed
+        // for every later session, but the preview control itself remains available.
+        runCatching { htmlPreviewSeen = viewModel.settings.htmlPreviewSeen.first() }
     }
 
     // Dirty if the buffer differs from the baseline, or if the workspace still has
@@ -258,9 +270,18 @@ fun EditorScreen(
 
         EditorActionStrip(
             dirty = dirty,
+            isHtml = path.endsWith(".html", ignoreCase = true) || path.endsWith(".htm", ignoreCase = true),
+            previewHintShown = htmlPreviewSeen,
             onUndo = { viewModel.toast("Undo") },
             onFormat = { viewModel.toast("Formatting") },
             onBuild = onOpenBuildLog,
+            onPreview = {
+                if (!htmlPreviewSeen) {
+                    htmlPreviewSeen = true
+                    scope.launch { viewModel.settings.setHtmlPreviewSeen(true) }
+                }
+                previewVisible = true
+            },
         )
     }
 
@@ -322,6 +343,15 @@ fun EditorScreen(
             persistedDirty = false
         },
     )
+
+    // Live HTML preview floats above everything so it never fights the sheet z-order.
+    if (path.endsWith(".html", ignoreCase = true) || path.endsWith(".htm", ignoreCase = true)) {
+        HtmlPreviewSheet(
+            visible = previewVisible,
+            htmlSource = text,
+            onDismiss = { previewVisible = false },
+        )
+    }
 }
 
 @Composable
@@ -429,9 +459,12 @@ private fun FindingsRail(
 @Composable
 private fun EditorActionStrip(
     dirty: Boolean,
+    isHtml: Boolean,
+    previewHintShown: Boolean,
     onUndo: () -> Unit,
     onFormat: () -> Unit,
     onBuild: () -> Unit,
+    onPreview: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxWidth().background(BerryColors.Surface1)) {
         BerryDivider()
@@ -445,10 +478,55 @@ private fun EditorActionStrip(
             BerryButton("Undo", onUndo, variant = BerryButtonVariant.Ghost, size = BerryButtonSize.Sm, icon = BerryIcons.History)
             BerryButton("Format", onFormat, variant = BerryButtonVariant.Ghost, size = BerryButtonSize.Sm, icon = BerryIcons.Wand)
             Spacer(Modifier.weight(1f))
+            if (isHtml) {
+                // Animated blue→cyan preview control. A small Beta badge sits above it
+                // the first time, then hides so the strip stays calm on later edits.
+                HtmlPreviewCta(
+                    showBeta = !previewHintShown,
+                    onClick = onPreview,
+                )
+                Spacer(Modifier.width(BerrySpacing.xs))
+            }
             if (dirty) {
                 BerryChip("local changes", color = BerryColors.Warning, icon = BerryIcons.Diff)
             }
             BerryButton("Build", onBuild, variant = BerryButtonVariant.Secondary, size = BerryButtonSize.Sm, icon = BerryIcons.Hammer)
+        }
+        if (isHtml && !previewHintShown) {
+            Text(
+                "Live preview: tap the button to see your page update as you type, no save needed.",
+                style = BerryType.Caption,
+                color = BerryColors.TextTertiary,
+                modifier = Modifier.padding(horizontal = BerrySpacing.md).padding(bottom = BerrySpacing.sm),
+            )
+        }
+    }
+}
+
+/** The animated preview button with a one-time "BETA" badge floating above it. */
+@Composable
+private fun HtmlPreviewCta(
+    showBeta: Boolean,
+    onClick: () -> Unit,
+) {
+    Box {
+        HtmlPreviewButton(onClick = onClick)
+        if (showBeta) {
+            androidx.compose.animation.AnimatedVisibility(
+                visible = true,
+                enter = fadeIn(tween(BerryMotion.Fast)) +
+                    slideInVertically(tween(BerryMotion.Fast)) { it / 2 },
+                modifier = Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-10).dp),
+            ) {
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(BerryRadius.sm))
+                        .background(BerryColors.Warning.copy(alpha = 0.92f))
+                        .padding(horizontal = BerrySpacing.xs, vertical = BerrySpacing.xxs),
+                ) {
+                    Text("BETA", style = BerryType.Overline, color = BerryColors.Base)
+                }
+            }
         }
     }
 }
