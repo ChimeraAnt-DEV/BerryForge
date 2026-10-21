@@ -62,6 +62,8 @@ import dev.chimeraant.berryforge.ui.components.BerrySurface
 import dev.chimeraant.berryforge.ui.components.BerryTextField
 import dev.chimeraant.berryforge.ui.components.HtmlPreviewButton
 import dev.chimeraant.berryforge.ui.components.HtmlPreviewSheet
+import dev.chimeraant.berryforge.ui.components.ModelFormats
+import dev.chimeraant.berryforge.ui.components.ModelPreviewSheet
 import dev.chimeraant.berryforge.ui.design.BerryColors
 import dev.chimeraant.berryforge.ui.design.BerryIcons
 import dev.chimeraant.berryforge.ui.design.BerryMotion
@@ -115,6 +117,9 @@ fun EditorScreen(
     var replaceWith by remember { mutableStateOf("") }
     var previewVisible by remember { mutableStateOf(false) }
     var htmlPreviewSeen by remember { mutableStateOf(false) }
+    val isHtml = path.endsWith(".html", ignoreCase = true) || path.endsWith(".htm", ignoreCase = true)
+    val isModel = ModelFormats.isModelFormat(path)
+    var modelViewMode by remember(path) { mutableStateOf(false) }
 
     // Load the file through the view model, which resolves mirror -> cache -> GitHub and
     // records the blob SHA at every step so a later commit has a base to update against.
@@ -228,6 +233,11 @@ fun EditorScreen(
                         )
                     },
                 )
+                isModel && modelViewMode -> ModelPreviewSheet(
+                    path = path,
+                    rawText = text,
+                    modifier = Modifier.fillMaxSize(),
+                )
                 else -> BerryCodeEditor(
                     config = EditorConfig(
                         path = path,
@@ -270,7 +280,10 @@ fun EditorScreen(
 
         EditorActionStrip(
             dirty = dirty,
-            isHtml = path.endsWith(".html", ignoreCase = true) || path.endsWith(".htm", ignoreCase = true),
+            isHtml = isHtml,
+            isModel = isModel,
+            isModelView = modelViewMode,
+            onToggleModelView = { modelViewMode = !modelViewMode },
             previewHintShown = htmlPreviewSeen,
             onUndo = { viewModel.toast("Undo") },
             onFormat = { viewModel.toast("Formatting") },
@@ -460,6 +473,9 @@ private fun FindingsRail(
 private fun EditorActionStrip(
     dirty: Boolean,
     isHtml: Boolean,
+    isModel: Boolean,
+    isModelView: Boolean,
+    onToggleModelView: () -> Unit,
     previewHintShown: Boolean,
     onUndo: () -> Unit,
     onFormat: () -> Unit,
@@ -477,6 +493,15 @@ private fun EditorActionStrip(
         ) {
             BerryButton("Undo", onUndo, variant = BerryButtonVariant.Ghost, size = BerryButtonSize.Sm, icon = BerryIcons.History)
             BerryButton("Format", onFormat, variant = BerryButtonVariant.Ghost, size = BerryButtonSize.Sm, icon = BerryIcons.Wand)
+            if (isModel) {
+                BerryButton(
+                    if (isModelView) "Code view" else "3D view",
+                    onToggleModelView,
+                    variant = if (isModelView) BerryButtonVariant.Secondary else BerryButtonVariant.Ghost,
+                    size = BerryButtonSize.Sm,
+                    icon = BerryIcons.Eye,
+                )
+            }
             Spacer(Modifier.weight(1f))
             if (isHtml) {
                 // Animated blue→cyan preview control. A small Beta badge sits above it
