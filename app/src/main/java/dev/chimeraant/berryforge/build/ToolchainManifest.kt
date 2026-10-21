@@ -36,12 +36,17 @@ internal object ToolchainManifest {
     /**
      * JDK 21, its native runtime dependencies, and the CA trust store.
      *
-     * Audio and X11 packages in the closure are dropped: a headless build never
-     * loads them, and they would add tens of megabytes for nothing.
+     * Audio packages are trimmed, not dropped: `alsa-lib` (which provides the
+     * `libasound.so` the JVM's sound library probes) is kept, while the server pieces
+     * (`alsa-plugins`, `pulseaudio` and its dbus/libc++/webrtc closure) are dropped —
+     * a headless IDE never routes audio, and they would add tens of megabytes for
+     * nothing. X11 packages remain dropped entirely.
      */
     val JDK_PACKAGES: List<TermuxPackage> = listOf(
         TermuxPackage("abseil-cpp", "pool/main/a/abseil-cpp/abseil-cpp_20260817.0_aarch64.deb", 1214712L,
             "b698963bb7096494ad928ce89cd869a53e6adf0b05f5f407b40fda9c85c6e2b0"),
+        TermuxPackage("alsa-lib", "pool/main/a/alsa-lib/alsa-lib_1.2.16.1_aarch64.deb", 453056L,
+            "34d850de4cf6a832b638a125ac2b029a46697e7a44c66f88fb388486c93314a5"),
         TermuxPackage("ca-certificates", "pool/main/c/ca-certificates/ca-certificates_1:2026.10.20-1_all.deb", 110132L,
             "ab8a7fe63293b455c02399ee125eb8a0041e430ccfdf89a5be8317522fdf9107"),
         TermuxPackage("ca-certificates-java", "pool/main/c/ca-certificates-java/ca-certificates-java_1:2026.10.20-1_all.deb", 95020L,
@@ -54,6 +59,8 @@ internal object ToolchainManifest {
             "0da3a24d558b93c92bcf8d611e0826a99ff96e396b148e6cdf33b47c47c57ff6"),
         TermuxPackage("libandroid-spawn", "pool/main/liba/libandroid-spawn/libandroid-spawn_0.3_aarch64.deb", 15216L,
             "7988fa788ef48ab5da9660443905a2e4099ac36221739d72f5c39acc644b4d1c"),
+        TermuxPackage("libandroid-sysv-semaphore", "pool/main/liba/libandroid-sysv-semaphore/libandroid-sysv-semaphore_0.1-1_aarch64.deb", 3568L,
+            "c3369a92814690d56278d0455ae6df7bf2ad7678ae9543e86d1e3aa433937c69"),
         TermuxPackage("libandroid-stub", "pool/main/liba/libandroid-stub/libandroid-stub_30-2_aarch64.deb", 26788L,
             "74087792a86e3f90772627f2217797e422e5d5fc47f24ad825fc3bbb539a667a"),
         TermuxPackage("libandroid-support", "pool/main/liba/libandroid-support/libandroid-support_29-1_aarch64.deb", 10880L,

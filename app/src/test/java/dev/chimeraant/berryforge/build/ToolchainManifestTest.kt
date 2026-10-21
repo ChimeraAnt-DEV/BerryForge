@@ -34,6 +34,25 @@ class ToolchainManifestTest {
     }
 
     @Test
+    fun jdkNativeRuntimeClosureIsComplete() {
+        // Each of these provides a library the JDK's own .so files link against at
+        // load time (verified against the ELF NEEDED entries of the openjdk-21 deb).
+        // Losing any one of them makes the JVM fail to start or crash lazily.
+        val required = setOf(
+            "libandroid-shmem", // libjvm.so
+            "libandroid-spawn", // libjvm.so, libjava.so
+            "libiconv", // libjvm.so
+            "libjpeg-turbo", // libjavajpeg.so -> libjpeg.so.8
+            "littlecms", // liblcms.so -> liblcms2.so
+            "zlib", // libzip.so -> libz.so.1
+            "alsa-lib", // libjsound.so probes libasound.so
+        )
+        val names = ToolchainManifest.JDK_PACKAGES.map { it.name }.toSet()
+        val missing = required - names
+        assertTrue("JDK runtime closure is missing packages: $missing", missing.isEmpty())
+    }
+
+    @Test
     fun everyEntryIsAWellFormedTermuxDeb() {
         allPackages.forEach { pkg ->
             with(pkg) {
