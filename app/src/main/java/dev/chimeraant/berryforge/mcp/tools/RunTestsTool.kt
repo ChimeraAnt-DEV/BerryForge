@@ -18,7 +18,7 @@ import dev.chimeraant.berryforge.mcp.requireStr
 import dev.chimeraant.berryforge.mcp.str
 import dev.chimeraant.berryforge.sandbox.SandboxGuard
 import dev.chimeraant.berryforge.session.SessionRecorder
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -74,7 +74,8 @@ class RunTestsTool(
         sessions.log(kind = "test", title = "run_tests ${task.args.first()}", detail = repo, repo = repo)
 
         val state = gradle.run(projectDir, task)
-        val lines = gradle.logLines.first()
+        // A process that exits without emitting a line leaves logLines empty.
+        val lines = gradle.logLines.firstOrNull() ?: emptyList()
         val failures = lines
             .filter { it.severity == LogSeverity.Error }
             .map { it.text.trim() }
