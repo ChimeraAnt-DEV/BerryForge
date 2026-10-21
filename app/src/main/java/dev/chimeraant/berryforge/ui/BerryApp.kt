@@ -58,10 +58,17 @@ fun BerryApp(viewModel: BerryViewModel) {
     var jumpToLine by remember { mutableStateOf<Int?>(null) }
     val onboardingDone by viewModel.onboardingDone.collectAsStateWithLifecycle()
     val toolchainReady by viewModel.toolchainReady.collectAsStateWithLifecycle()
+    val settingsBootstrapped by viewModel.settingsBootstrapped.collectAsStateWithLifecycle()
     val openRepoNow by viewModel.openRepo.collectAsStateWithLifecycle()
 
-    LaunchedEffect(signedIn, onboardingDone, toolchainReady) {
-        if (signedIn && !onboardingDone && !toolchainReady) showWizard = true
+    LaunchedEffect(signedIn, onboardingDone, toolchainReady, settingsBootstrapped) {
+        // Gate on settingsBootstrapped: the StateFlows start at false, and on a
+        // returning user signedIn flips true before the persisted flags are read. Without
+        // the gate, the first-run wizard would pop over the app on every launch even
+        // when the toolchain had already been installed and the onboarding finished.
+        if (settingsBootstrapped && signedIn && !onboardingDone && !toolchainReady) {
+            showWizard = true
+        }
     }
 
     Box(Modifier.fillMaxSize()) {

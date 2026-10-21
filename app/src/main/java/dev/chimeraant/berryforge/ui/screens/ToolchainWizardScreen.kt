@@ -18,7 +18,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
@@ -105,18 +107,26 @@ fun ToolchainWizardScreen(
         label = "installProgress",
     )
 
-    // The dialog itself — an opaque panel, small relative to the screen, with a heavy
-    // scrim behind it so the modal is unmistakable against whatever destination is open.
+    // The dialog itself — a compact, fully opaque panel with a bounded width so it reads
+    // as a real modal on any screen size, a heavy scrim behind it, and a soft shadow so
+    // it clearly floats above whatever destination is open.
     Box(
         modifier
             .fillMaxSize()
             .background(BerryColors.Scrim)
-            .padding(BerrySpacing.xl),
+            .padding(BerrySpacing.xxl),
         contentAlignment = Alignment.Center,
     ) {
         Box(
             modifier
+                .widthIn(max = 460.dp)
                 .fillMaxWidth()
+                .shadow(
+                    elevation = 24.dp,
+                    shape = RoundedCornerShape(BerryRadius.xxl),
+                    ambientColor = BerryColors.Edit.copy(alpha = 0.18f),
+                    spotColor = BerryColors.Base,
+                )
                 .clip(RoundedCornerShape(BerryRadius.xxl))
                 .background(BerryColors.Surface2)
                 .padding(

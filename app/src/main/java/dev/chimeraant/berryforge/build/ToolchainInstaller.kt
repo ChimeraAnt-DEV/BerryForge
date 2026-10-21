@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import dev.chimeraant.berryforge.core.Http
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -174,6 +175,10 @@ class ToolchainInstaller(private val context: Context) {
         runCatching {
             val steps = components()
 
+            // Fail loudly instead of half-extracting when the device is nearly full: a
+            // partial JDK is unusable and much harder to diagnose than a clear message.
+            ensureDiskSpace()
+
             _state.value = ToolchainState.Downloading(steps[0].label, "Starting", 0, steps[0].approxBytes, 0f)
             installPackages(ToolchainManifest.JDK_PACKAGES, usrPrefix, 0, steps[0], onProgress)
             if (!File(jdkHome, "bin/java").exists()) {
@@ -310,10 +315,13 @@ class ToolchainInstaller(private val context: Context) {
     /**
      * Streams a download to disk, verifying the SHA-256 when one is known.
      *
-     * A digest mismatch deletes the file and throws, so a corrupted or substituted
-     * download never reaches extraction.
+     * The write is staged to a `.part` file and renamed only on success, so a failed or
+     * interrupted download can never leave a truncated archive that a later run mistakes
+     * for a valid cache entry. Mobile networks drop large transfers, so a failed attempt
+     * is retried (up to [DOWNLOAD_ATTEMPTS] times) with a short backoff instead of
+     * aborting the whole toolchain install on the first blip.
      */
-    private fun downloadVerified(
+    private suspend fun downloadVerified(
         url: String,
         target: File,
         expectedBytes: Long,
@@ -322,46 +330,63 @@ class ToolchainInstaller(private val context: Context) {
         onProgress: (Long) -> Unit,
     ) {
         target.parentFile?.mkdirs()
-        val request = okhttp3.Request.Builder().url(url).get().build()
-        Http.longClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                error("Download failed for $label: HTTP ${response.code} from $url")
-            }
-            val body = response.body ?: error("Empty response for $label")
-            val total = body.contentLength().takeIf { it > 0 } ?: expectedBytes
-            val digest = MessageDigest.getInstance("SHA-256")
+        val part = File(target.parentFile, "${target.name}.part")
+        part.delete()
+        var lastError: Throwable? = null
 
-            body.byteStream().use { input ->
-                target.outputStream().use { output ->
-                    val buffer = ByteArray(64 * 1024)
-                    var written = 0L
-                    var lastReported = 0L
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read <= 0) break
-                        output.write(buffer, 0, read)
-                        digest.update(buffer, 0, read)
-                        written += read
-                        if (written - lastReported > total / 100 || written == total) {
-                            lastReported = written
-                            onProgress(written)
+        repeat(DOWNLOAD_ATTEMPTS) { attempt ->
+            try {
+                val request = okhttp3.Request.Builder().url(url).get().build()
+                Http.longClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        error("Download failed for $label: HTTP ${response.code} from $url")
+                    }
+                    val body = response.body ?: error("Empty response for $label")
+                    val total = body.contentLength().takeIf { it > 0 } ?: expectedBytes
+                    val digest = MessageDigest.getInstance("SHA-256")
+
+                    body.byteStream().use { input ->
+                        part.outputStream().use { output ->
+                            val buffer = ByteArray(64 * 1024)
+                            var written = 0L
+                            var lastReported = 0L
+                            while (true) {
+                                val read = input.read(buffer)
+                                if (read <= 0) break
+                                output.write(buffer, 0, read)
+                                digest.update(buffer, 0, read)
+                                written += read
+                                if (written - lastReported > total / 100 || written == total) {
+                                    lastReported = written
+                                    onProgress(written)
+                                }
+                            }
+                            if (written == 0L) error("Downloaded 0 bytes for $label from $url")
                         }
                     }
-                    if (written == 0L) error("Downloaded 0 bytes for $label from $url")
-                }
-            }
 
-            if (expectedSha256 != null) {
-                val actual = digest.digest().joinToString("") { "%02x".format(it) }
-                if (!actual.equals(expectedSha256, ignoreCase = true)) {
-                    target.delete()
-                    error(
-                        "Checksum mismatch for $label: expected ${expectedSha256.take(16)}…, " +
-                            "got ${actual.take(16)}…",
-                    )
+                    if (expectedSha256 != null) {
+                        val actual = digest.digest().joinToString("") { "%02x".format(it) }
+                        if (!actual.equals(expectedSha256, ignoreCase = true)) {
+                            error(
+                                "Checksum mismatch for $label: expected ${expectedSha256.take(16)}…, " +
+                                    "got ${actual.take(16)}…",
+                            )
+                        }
+                    }
+                }
+                part.renameTo(target)
+                return
+            } catch (error: Exception) {
+                lastError = error
+                part.delete()
+                if (attempt < DOWNLOAD_ATTEMPTS - 1) {
+                    note("$label attempt ${attempt + 1} failed: ${error.message ?: "network error"}; retrying.")
+                    delay(DOWNLOAD_RETRY_DELAY_MS * (attempt + 1))
                 }
             }
         }
+        throw (lastError ?: IllegalStateException("$label download failed"))
     }
 
     /**
@@ -471,6 +496,34 @@ class ToolchainInstaller(private val context: Context) {
 
     fun installSizeBytes(): Long = root.walkBottomUp().filter { it.isFile }.sumOf { it.length() }
 
+    /**
+     * Aborts the install when there is not enough free space for the archives plus a
+     * headroom margin for extraction, so a nearly-full device fails with a useful
+     * message instead of silently corrupting the JDK. Rough but honest: the real peak is
+     * the sum of the archives and their expanded trees, and this provides that headroom.
+     */
+    private fun ensureDiskSpace() {
+        val archives = ToolchainManifest.JDK_PACKAGES.sumOf { it.size } +
+            BUILD_TOOLS_BYTES + PLATFORM_BYTES
+        val required = archives + MIN_FREE_BYTES
+        val free = runCatching {
+            val stat = android.os.StatFs(root.path)
+            stat.availableBytes
+        }.getOrNull() ?: return
+        if (free < required) {
+            error(
+                "Not enough free space: needs ${formatSpace(required)}, " +
+                    "${formatSpace(free)} free on this device. Free up space and retry.",
+            )
+        }
+    }
+
+    private fun formatSpace(bytes: Long): String = when {
+        bytes >= 1L shl 30 -> String.format("%.1f GB", bytes / 1073741824.0)
+        bytes >= 1L shl 20 -> String.format("%.0f MB", bytes / 1048576.0)
+        else -> "${bytes / 1024} KB"
+    }
+
     /** Removes everything so a clean reinstall can be attempted. */
     fun wipe() {
         runCatching { root.deleteRecursively() }
@@ -495,5 +548,14 @@ class ToolchainInstaller(private val context: Context) {
         private const val PLATFORM_URL =
             "https://dl.google.com/android/repository/platform-35_r01.zip"
         private const val PLATFORM_BYTES = 60_000_000L
+
+        /** How many times a single download is attempted before the install fails. */
+        private const val DOWNLOAD_ATTEMPTS = 3
+
+        /** Base delay between download retries (scaled by the attempt number). */
+        private const val DOWNLOAD_RETRY_DELAY_MS = 1_500L
+
+        /** Headroom kept free beyond the download sizes for the extracted trees. */
+        private const val MIN_FREE_BYTES = 400L * 1024 * 1024
     }
 }

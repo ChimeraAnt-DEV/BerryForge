@@ -67,16 +67,30 @@ class CommitTool(
 
         val (owner, name) = McpValidation.splitRepo(repo)
 
-        val outcome = flow.commit(
-            owner = owner,
-            name = name,
-            message = message,
-            branch = branch,
-            paths = paths,
-            openPr = openPr,
-            prTitle = prTitle,
-            prBody = prBody,
-        )
+        val outcome = runCatching {
+            flow.commit(
+                owner = owner,
+                name = name,
+                message = message,
+                branch = branch,
+                paths = paths,
+                openPr = openPr,
+                prTitle = prTitle,
+                prBody = prBody,
+            )
+        }.getOrElse { error ->
+            // A missing/invalid token or a corrupt workspace must never crash the server:
+            // surface it as a tool error so the caller gets a clear, structured message.
+            throw McpToolException(
+                when (error) {
+                    is dev.chimeraant.berryforge.data.github.GitHubException ->
+                        error.payload.lineSequence().firstOrNull { it.isNotBlank() }
+                            ?.take(240)
+                            ?: "GitHub rejected the request (${error.code})."
+                    else -> error.message ?: "The commit could not be completed."
+                },
+            )
+        }
 
         sessions.log(
             kind = "tool",
