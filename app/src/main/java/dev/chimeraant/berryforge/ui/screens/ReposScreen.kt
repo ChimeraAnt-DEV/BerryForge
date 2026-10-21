@@ -1,7 +1,11 @@
 package dev.chimeraant.berryforge.ui.screens
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.draw.scale
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.core.Spring
@@ -162,12 +166,24 @@ fun ReposScreen(
 
 @Composable
 private fun RepoRow(repo: GhRepo, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.98f else 1f,
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMediumLow),
+        label = "repoRowScale",
+    )
     Row(
         Modifier
             .fillMaxWidth()
+            .scale(scale)
             .clip(RoundedCornerShape(BerryRadius.lg))
             .background(BerryColors.Surface2)
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onClick,
+            )
             .padding(BerrySpacing.lg),
         verticalAlignment = Alignment.CenterVertically,
     ) {

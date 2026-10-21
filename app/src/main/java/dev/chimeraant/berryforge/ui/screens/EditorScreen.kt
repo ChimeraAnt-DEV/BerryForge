@@ -280,9 +280,10 @@ fun EditorScreen(
             }
 
             // Severity spine for review findings, pinned to the right edge.
-            if (!review?.findings.isNullOrEmpty()) {
+            val findings = review?.findings
+            if (!findings.isNullOrEmpty()) {
                 dev.chimeraant.berryforge.editor.FindingsSpine(
-                    marks = review!!.findings.associate { it.startLine to it.severity.gutterColor() },
+                    marks = findings.associate { it.startLine to it.severity.gutterColor() },
                     lineCount = text.lines().size,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -292,7 +293,7 @@ fun EditorScreen(
                     onClick = { reviewSheetOpen = true },
                 )
                 FindingsRail(
-                    findings = review!!.findings,
+                    findings = findings,
                     modifier = Modifier.align(Alignment.TopEnd).padding(BerrySpacing.md),
                     onClick = { reviewSheetOpen = true },
                 )
