@@ -77,8 +77,16 @@ fun CommitSheet(
     LaunchedEffect(visible) {
         if (!visible) return@LaunchedEffect
         branch = "berryforge/${System.currentTimeMillis() / 1000 % 100000}"
-        stagedPaths = viewModel.workspace.dirtyPaths(owner, name)
-        diff = viewModel.commitFlow.stagedDiff(owner, name, stagedPaths)
+        // Reading the staged set or building the diff touches the on-disk workspace.
+        // An unreadable file must surface as a closed sheet with a toast rather than
+        // an uncaught exception that kills the activity.
+        runCatching {
+            stagedPaths = viewModel.workspace.dirtyPaths(owner, name)
+            diff = viewModel.commitFlow.stagedDiff(owner, name, stagedPaths)
+        }.onFailure { failure ->
+            stagedPaths = emptyList()
+            viewModel.toast("Could not build the diff: ${failure.message ?: "unknown error"}")
+        }
     }
 
     BerrySheet(
@@ -233,24 +241,43 @@ fun CommitSheet(
                         }
                         working = true
                         scope.launch {
-                            val outcome = viewModel.commitFlow.commit(
-                                owner = owner,
-                                name = name,
-                                message = message,
-                                branch = branch,
-                                paths = stagedPaths,
-                                openPr = openPr,
-                                prTitle = prTitle.ifBlank { message },
-                                prBody = "",
-                                baseBranch = defaultBranch,
-                            )
+                            val outcome = runCatching {
+                                viewModel.commitFlow.commit(
+                                    owner = owner,
+                                    name = name,
+                                    message = message,
+                                    branch = branch,
+                                    paths = stagedPaths,
+                                    openPr = openPr,
+                                    prTitle = prTitle.ifBlank { message },
+                                    prBody = "",
+                                    baseBranch = defaultBranch,
+                                )
+                            }
                             working = false
-                            if (outcome.pushed || outcome.files.isNotEmpty()) {
-                                onCommitted(outcome.branch)
-                                outcome.note?.let { viewModel.toast(it) }
+                            outcome.onFailure { error ->
+                                // A network or API failure must never crash the sheet:
+                                // surface the real reason and keep the draft intact so the
+                                // user can fix and retry instead of losing everything.
+                                val readable = when (error) {
+                                    is dev.chimeraant.berryforge.data.github.GitHubException ->
+                                        error.payload
+                                            .lineSequence()
+                                            .firstOrNull { it.isNotBlank() }
+                                            ?.take(160)
+                                            ?: "GitHub rejected the request (${error.code})."
+                                    else -> error.message ?: "The commit could not be pushed."
+                                }
+                                viewModel.toast(readable)
+                                return@launch
+                            }
+                            val done = outcome.getOrThrow()
+                            if (done.pushed || done.files.isNotEmpty()) {
+                                onCommitted(done.branch)
+                                done.note?.let { viewModel.toast(it) }
                                 onDismiss()
                             } else {
-                                viewModel.toast(outcome.note ?: "Nothing was pushed.")
+                                viewModel.toast(done.note ?: "Nothing was pushed.")
                             }
                         }
                     },

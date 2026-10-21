@@ -258,8 +258,13 @@ fun AgentScreen(
             destructive = true,
             onConfirm = {
                 scope.launch {
-                    val count = viewModel.sessions.revertSession(session)
-                    viewModel.toast("Reverted $count file(s).")
+                    runCatching { viewModel.sessions.revertSession(session) }
+                        .onSuccess { count ->
+                            viewModel.toast("Reverted $count file(s).")
+                        }
+                        .onFailure { failure ->
+                            viewModel.toast("Could not revert: ${failure.message ?: "unknown error"}")
+                        }
                 }
             },
         )

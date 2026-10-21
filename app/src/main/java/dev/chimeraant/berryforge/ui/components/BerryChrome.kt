@@ -2,6 +2,7 @@ package dev.chimeraant.berryforge.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -502,6 +503,8 @@ private fun NavItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val interaction = remember { MutableInteractionSource() }
+
     val tint by animateColorAsState(
         targetValue = when {
             !enabled -> BerryColors.TextDisabled
@@ -511,6 +514,22 @@ private fun NavItem(
         animationSpec = tween(BerryMotion.Fast),
         label = "navTint",
     )
+    // A soft pill behind the active item. The container colour is a *fixed* tint of the
+    // accent (same RGB every frame) so an interrupted animation can never rest on a
+    // blend of black — the same principle as the buttons in BerryPrimitives.
+    val pillColor by animateColorAsState(
+        targetValue = if (selected) accent.copy(alpha = 0.16f) else Color.Transparent,
+        animationSpec = tween(BerryMotion.Fast),
+        label = "navPill",
+    )
+    val pillScale by animateFloatAsState(
+        targetValue = if (selected) 1f else 0.86f,
+        animationSpec = spring(
+            dampingRatio = 0.8f,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "navPillScale",
+    )
     val icon: ImageVector = when (destination) {
         Destination.Repos -> BerryIcons.Branch
         Destination.Editor -> BerryIcons.FileCode
@@ -519,11 +538,19 @@ private fun NavItem(
         Destination.Terminal -> BerryIcons.Terminal
         Destination.Settings -> BerryIcons.Settings
     }
+    val shape = RoundedCornerShape(BerryRadius.lg)
 
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(BerryRadius.sm))
-            .clickable(enabled = enabled, onClick = onClick)
+            .clip(shape)
+            .background(pillColor)
+            .scale(pillScale)
+            .clickable(
+                interactionSource = interaction,
+                indication = berryIndication(accent),
+                enabled = enabled,
+                onClick = onClick,
+            )
             .padding(vertical = BerrySpacing.xs),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(3.dp),
