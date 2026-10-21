@@ -703,9 +703,11 @@ private fun ModelPicker(
                     onClick = {
                         loading = true
                         scope.launch {
-                            val result = loadFromEndpoint()
-                            fromEndpoint = result.isSuccess
-                            models = loadModels()
+                            runCatching {
+                                val result = loadFromEndpoint()
+                                fromEndpoint = result.isSuccess
+                                models = loadModels()
+                            }.onFailure { fromEndpoint = false }
                             loading = false
                         }
                     },

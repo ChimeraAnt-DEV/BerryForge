@@ -205,8 +205,10 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
                 container.auth.signOut(account)
             }
             if (login != null) container.auth.signOut(login)
-            container.workspace.wipeAll()
-            container.repoCache.clear()
+            // Wiping mirrors and the cache touches the filesystem; a locked or
+            // unreadable file must not block the sign-out that is already happening.
+            runCatching { container.workspace.wipeAll() }
+            runCatching { container.repoCache.clear() }
             _signedIn.value = false
             _user.value = null
             _isOwner.value = false
