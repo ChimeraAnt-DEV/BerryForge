@@ -78,21 +78,56 @@ class AiReviewService(
      * was broken. These are well-known ids from the major OpenAI-compatible providers.
      */
     fun suggestedModels(): List<String> = listOf(
+        // OpenAI
         "gpt-4o-mini",
         "gpt-4o",
         "gpt-4.1-mini",
         "gpt-4.1",
+        "gpt-4.1-nano",
         "o4-mini",
+        "o3-mini",
+        "o1",
+        // Anthropic
+        "claude-3-7-sonnet-latest",
         "claude-3-5-sonnet-latest",
         "claude-3-5-haiku-latest",
+        "claude-sonnet-4-20250514",
+        "claude-opus-4-20250514",
+        // Google
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
         "gemini-2.0-flash",
         "gemini-1.5-pro",
+        "gemini-1.5-flash",
+        // Groq (fast inference)
         "llama-3.3-70b-versatile",
         "llama-3.1-8b-instant",
         "mixtral-8x7b-32768",
         "qwen2.5-coder-32b-instruct",
+        // Mistral
+        "codestral-latest",
+        "mistral-large-latest",
+        "mistral-small-latest",
+        "ministral-3b-latest",
+        // DeepSeek
         "deepseek-chat",
         "deepseek-coder",
+        "deepseek-reasoner",
+        // Alibaba / Qwen (self-host friendly)
+        "qwen-max",
+        "qwen-plus",
+        "qwen-turbo",
+        // Local / community (Ollama, llama.cpp, LM Studio)
+        "qwen2.5-coder:7b-instruct",
+        "qwen2.5-coder:14b-instruct",
+        "qwen2.5-coder:32b-instruct",
+        "deepseek-coder-v2:16b",
+        "codellama:7b-instruct",
+        "codegemma:7b-instruct",
+        "llama3.1:8b-instruct",
+        "gemma2:27b-instruct",
+        "phi4-mini",
+        "starcoder2:15b",
     )
 
     /**

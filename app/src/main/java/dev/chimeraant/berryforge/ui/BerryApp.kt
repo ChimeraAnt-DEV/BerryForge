@@ -94,6 +94,24 @@ fun BerryApp(viewModel: BerryViewModel) {
                                 viewModel = viewModel,
                                 onBack = { showAccounts = false },
                             )
+                            showProfile -> ProfileScreen(
+                                viewModel = viewModel,
+                                onOpenRepo = {
+                                    // Opening a repo from Profile belongs on the Repos
+                                    // tab: it lands the user where the file tree lives.
+                                    destination = Destination.Repos
+                                    viewModel.openRepo(it)
+                                },
+                                onOpenSettings = {
+                                    showProfile = false
+                                    destination = Destination.Settings
+                                },
+                                onManageAccounts = {
+                                    showProfile = false
+                                    showAccounts = true
+                                },
+                                onBack = { showProfile = false },
+                            )
 
                             file != null -> EditorScreen(
                                 viewModel = viewModel,
