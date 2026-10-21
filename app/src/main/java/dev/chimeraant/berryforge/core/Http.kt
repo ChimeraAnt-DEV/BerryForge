@@ -26,4 +26,17 @@ object Http {
             .callTimeout(0, TimeUnit.SECONDS)
             .build()
     }
+
+    /**
+     * Client for the toolchain downloads. Large enough to stream a 100 MB JDK without
+     * tripping, but the read timeout is an *inactivity* timeout: a connection that
+     * stops delivering bytes (the classic flaky-mobile stall) trips after 60 s so the
+     * installer's retry loop can recover instead of hanging forever. `callTimeout` stays
+     * zero because the whole transfer legitimately takes minutes.
+     */
+    val downloadClient: OkHttpClient by lazy {
+        client.newBuilder()
+            .readTimeout(60, TimeUnit.SECONDS)
+            .build()
+    }
 }

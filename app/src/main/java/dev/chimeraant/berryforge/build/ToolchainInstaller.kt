@@ -337,7 +337,7 @@ class ToolchainInstaller(private val context: Context) {
         repeat(DOWNLOAD_ATTEMPTS) { attempt ->
             try {
                 val request = okhttp3.Request.Builder().url(url).get().build()
-                Http.longClient.newCall(request).execute().use { response ->
+                Http.downloadClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
                         error("Download failed for $label: HTTP ${response.code} from $url")
                     }
