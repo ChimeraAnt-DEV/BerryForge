@@ -21,8 +21,14 @@ import okhttp3.RequestBody.Companion.toRequestBody
  */
 class GitHubAuth(private val secure: SecureStore) {
 
-    /** Token of the currently selected account, or null when signed out. */
-    val activeToken: String? get() = secure.activeToken
+    /**
+     * Token used for API calls: a personal access token set in Settings overrides the
+     * signed-in account's token so commit/PR work even when the OAuth token lacks scope.
+     */
+    val activeToken: String? get() = secure.githubPat?.takeIf { it.isNotBlank() } ?: secure.activeToken
+
+    /** True when the user has configured a PAT in Settings. */
+    val hasPat: Boolean get() = !secure.githubPat.isNullOrBlank()
 
     val activeLogin: String? get() = secure.activeLogin
 

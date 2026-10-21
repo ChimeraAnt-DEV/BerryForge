@@ -58,9 +58,17 @@ fun BerryApp(viewModel: BerryViewModel) {
     var jumpToLine by remember { mutableStateOf<Int?>(null) }
     val onboardingDone by viewModel.onboardingDone.collectAsStateWithLifecycle()
     val toolchainReady by viewModel.toolchainReady.collectAsStateWithLifecycle()
+    val settingsBootstrapped by viewModel.settingsBootstrapped.collectAsStateWithLifecycle()
+    val openRepoNow by viewModel.openRepo.collectAsStateWithLifecycle()
 
-    LaunchedEffect(signedIn, onboardingDone, toolchainReady) {
-        if (signedIn && !onboardingDone && !toolchainReady) showWizard = true
+    LaunchedEffect(signedIn, onboardingDone, toolchainReady, settingsBootstrapped) {
+        // Gate on settingsBootstrapped: the StateFlows start at false, and on a
+        // returning user signedIn flips true before the persisted flags are read. Without
+        // the gate, the first-run wizard would pop over the app on every launch even
+        // when the toolchain had already been installed and the onboarding finished.
+        if (settingsBootstrapped && signedIn && !onboardingDone && !toolchainReady) {
+            showWizard = true
+        }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -93,6 +101,24 @@ fun BerryApp(viewModel: BerryViewModel) {
                                 viewModel = viewModel,
                                 onBack = { showAccounts = false },
                             )
+                            showProfile -> ProfileScreen(
+                                viewModel = viewModel,
+                                onOpenRepo = {
+                                    // Opening a repo from Profile belongs on the Repos
+                                    // tab: it lands the user where the file tree lives.
+                                    destination = Destination.Repos
+                                    viewModel.openRepo(it)
+                                },
+                                onOpenSettings = {
+                                    showProfile = false
+                                    destination = Destination.Settings
+                                },
+                                onManageAccounts = {
+                                    showProfile = false
+                                    showAccounts = true
+                                },
+                                onBack = { showProfile = false },
+                            )
 
                             file != null -> EditorScreen(
                                 viewModel = viewModel,
@@ -121,7 +147,17 @@ fun BerryApp(viewModel: BerryViewModel) {
                                 } else {
                                     FileTreeScreen(
                                         viewModel = viewModel,
-                                        onOpenFile = { openFilePath = it },
+                                        onOpenFile = { path ->
+                                            // Editing from the Repos tab belongs on the
+                                            // Editor tab: switch the bottom bar there so
+                                            // the user-landing matches the highlighted tab.
+                                            if (destination == Destination.Repos) {
+                                                destination = Destination.Editor
+                                                openFilePath = path
+                                            } else {
+                                                openFilePath = path
+                                            }
+                                        },
                                         onBack = { viewModel.closeRepo() },
                                         onProfileClick = { showProfile = true },
                                         onManageAccounts = { showAccounts = true },
@@ -190,7 +226,22 @@ fun BerryApp(viewModel: BerryViewModel) {
                 }
                 BerryBottomBar(
                     current = destination,
-                    onSelect = { destination = it },
+                    onSelect = { selected ->
+                        // Leaving the editor closes the open file and the jump target:
+                        // otherwise switching tabs stayed in edit mode because the
+                        // open-file branch is checked before the destination branches.
+                        if (selected != destination) {
+                            openFilePath = null
+                            jumpToLine = null
+                        }
+                        // Re-tapping the current tab with a file open exits edit mode
+                        // back to that tab's root.
+                        if (selected == destination && openFilePath != null && openRepoNow != null) {
+                            openFilePath = null
+                            jumpToLine = null
+                        }
+                        destination = selected
+                    },
                 )
             }
         }

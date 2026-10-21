@@ -99,6 +99,18 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
     private val _onboardingDone = MutableStateFlow(false)
     val onboardingDone: StateFlow<Boolean> = _onboardingDone.asStateFlow()
 
+    /**
+     * True once the persisted onboarding/toolchain flags have been read at least once.
+     *
+     * The StateFlows above start at `false`, so on a returning user there is a window
+     * between sign-in and the first DataStore emission where `onboardingDone` and
+     * `toolchainReady` both read as false. Without this gate the first-run wizard pops
+     * over the app for a returning user every launch, which is the "wizard re-pops after
+     * the toolchain was already extracted" bug.
+     */
+    private val _settingsBootstrapped = MutableStateFlow(false)
+    val settingsBootstrapped: StateFlow<Boolean> = _settingsBootstrapped.asStateFlow()
+
     private val _pendingApprovals =
         MutableStateFlow<List<dev.chimeraant.berryforge.session.ApprovalRequest>>(emptyList())
     val pendingApprovals: StateFlow<List<dev.chimeraant.berryforge.session.ApprovalRequest>> =
@@ -129,10 +141,26 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
 
     init {
         viewModelScope.launch {
-            container.settings.onboardingDone.collect { _onboardingDone.value = it }
+            container.settings.onboardingDone.collect {
+                _onboardingDone.value = it
+                markSettingsBootstrappedIfReady()
+            }
         }
         viewModelScope.launch {
-            container.settings.toolchainReady.collect { _toolchainReady.value = it }
+            container.settings.toolchainReady.collect {
+                _toolchainReady.value = it
+                markSettingsBootstrappedIfReady()
+            }
+        }
+        viewModelScope.launch {
+            // The onboarding/toolchain flags are just persisted intentions; the ground
+            // truth is what actually landed on disk. Re-read it on every launch so a
+            // completed install is never re-offered and an interrupted one is.
+            container.toolchain.refreshState()
+            val ready = container.toolchain.isInstalled()
+            _toolchainReady.value = ready
+            markSettingsBootstrappedIfReady()
+            if (ready) container.settings.setToolchainReady(true)
         }
         viewModelScope.launch {
             container.sessions.pending.collect { _pendingApprovals.value = it }
@@ -606,6 +634,15 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
 
     fun markOnboardingDone() {
         viewModelScope.launch { container.settings.setOnboardingDone(true) }
+    }
+
+    /**
+     * Flips [settingsBootstrapped] once the onboarding flag has been read. The explicit
+     * disk read in [init] also drives it, so the flag is never blocked on the DataStore
+     * emission ordering.
+     */
+    private fun markSettingsBootstrappedIfReady() {
+        _settingsBootstrapped.compareAndSet(expect = false, update = true)
     }
 
     /** Hands a built APK to the platform installer via the app's FileProvider. */

@@ -20,7 +20,7 @@ import dev.chimeraant.berryforge.mcp.requireStr
 import dev.chimeraant.berryforge.mcp.str
 import dev.chimeraant.berryforge.sandbox.SandboxGuard
 import dev.chimeraant.berryforge.session.SessionRecorder
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -86,7 +86,7 @@ class RunBuildTool(
             }
         }
 
-        val allLines = gradle.logLines.first()
+        val allLines = gradle.logLines.firstOrNull() ?: emptyList()
         val tail = allLines.takeLast(maxLines)
         val errors = parser.errorsFrom(allLines)
 

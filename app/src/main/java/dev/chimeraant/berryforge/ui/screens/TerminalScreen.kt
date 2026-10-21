@@ -67,13 +67,19 @@ fun TerminalScreen(
         viewModel.settings.terminalFontSize.collect { fontSize = it }
     }
 
-    val environment = remember(sessionKey) {
-        runCatching {
-            val port = kotlinx.coroutines.runBlocking { viewModel.settings.mcpPort.first() }
-            val token = viewModel.secure.mcpTokenOrCreate()
-            viewModel.shellEnv.ensureShims()
-            viewModel.shellEnv.environment()
-        }.getOrDefault(emptyMap())
+    // The environment setup touches DataStore and encrypted prefs; doing it with runBlocking
+    // on the UI thread froze the first terminal open until those disks were read. Build it
+    // in a coroutine instead and present a "preparing" state until it resolves.
+    var environment by remember(sessionKey) { mutableStateOf<Map<String, String>?>(null) }
+    LaunchedEffect(environment, sessionKey) {
+        if (environment == null) {
+            environment = runCatching {
+                val port = viewModel.settings.mcpPort.first()
+                val token = viewModel.secure.mcpTokenOrCreate()
+                viewModel.shellEnv.ensureShims()
+                viewModel.shellEnv.environment()
+            }.getOrDefault(emptyMap())
+        }
     }
     val shellCommand = remember { viewModel.shellEnv.shellCommand() }
 
@@ -112,7 +118,8 @@ fun TerminalScreen(
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (environment.isEmpty()) {
+            val readyEnvironment = environment
+            if (readyEnvironment == null) {
                 Column(
                     Modifier.fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -124,7 +131,7 @@ fun TerminalScreen(
                 }
             } else {
                 BerryTerminalView(
-                    environment = environment,
+                    environment = readyEnvironment,
                     shellCommand = shellCommand,
                     fontSize = fontSize,
                     modifier = Modifier.fillMaxSize(),

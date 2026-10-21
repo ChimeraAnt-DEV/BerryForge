@@ -102,6 +102,8 @@ fun SettingsScreen(
     var terminalFont by remember { mutableStateOf("13") }
     var wordWrap by remember { mutableStateOf(false) }
     var toolchainReady by remember { mutableStateOf(false) }
+    var githubPat by remember { mutableStateOf("") }
+    var patSaved by remember { mutableStateOf(false) }
     val mcpStatus by viewModel.mcpStatus.collectAsStateWithLifecycle()
     val serverRunning = mcpStatus is McpStatus.Running || mcpStatus is McpStatus.Starting
 
@@ -123,6 +125,7 @@ fun SettingsScreen(
         terminalFont = viewModel.settings.terminalFontSize.first().toString()
         wordWrap = viewModel.settings.editorWordWrap.first()
         toolchainReady = viewModel.settings.toolchainReady.first()
+        githubPat = viewModel.secure.githubPat.orEmpty()
     }
 
     Column(modifier.fillMaxSize()) {
@@ -197,6 +200,55 @@ fun SettingsScreen(
                             viewModel.settings.setLlmEndpoint(llmEndpoint)
                             viewModel.settings.setLlmModel(llmModel)
                             viewModel.toast("Endpoint saved.")
+                        }
+                    },
+                    variant = BerryButtonVariant.Secondary,
+                    size = BerryButtonSize.Sm,
+                )
+            }
+
+            Spacer(Modifier.height(BerrySpacing.xl))
+
+            // ================= GitHub =================
+            Section("GitHub", BerryIcons.Branch, BerryColors.Edit)
+            BerryTextField(
+                value = githubPat,
+                onValueChange = { githubPat = it; patSaved = false },
+                label = "Personal access token",
+                placeholder = "ghp_…",
+                icon = BerryIcons.Key,
+                isSecret = true,
+                helper = "Used for commit and pull-request writes. Encrypted on this device.",
+                modifier = Modifier.fillMaxWidth(),
+                mono = true,
+            )
+            Spacer(Modifier.height(BerrySpacing.sm))
+            Row(horizontalArrangement = Arrangement.spacedBy(BerrySpacing.sm)) {
+                BerryButton(
+                    text = if (patSaved) "Saved" else "Save token",
+                    onClick = {
+                        viewModel.secure.githubPat = githubPat.takeIf { it.isNotBlank() }
+                        patSaved = true
+                        viewModel.toast(
+                            if (githubPat.isNotBlank()) {
+                                "GitHub token saved. Commits and PRs will use it."
+                            } else {
+                                "GitHub token removed. Using your signed-in account."
+                            },
+                        )
+                    },
+                    icon = BerryIcons.Check,
+                    size = BerryButtonSize.Sm,
+                )
+                BerryButton(
+                    text = "Test",
+                    onClick = {
+                        scope.launch {
+                            runCatching { viewModel.api.me() }
+                                .onSuccess { viewModel.toast("Token works — signed in as ${it.login}.") }
+                                .onFailure {
+                                    viewModel.toast("Token rejected: ${it.message ?: "unknown error"}")
+                                }
                         }
                     },
                     variant = BerryButtonVariant.Secondary,

@@ -14,7 +14,20 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.unit.dp
+import io.github.rosemoe.sora.lang.diagnostic.DiagnosticDetail
+import io.github.rosemoe.sora.lang.diagnostic.DiagnosticRegion
+import io.github.rosemoe.sora.lang.diagnostic.DiagnosticsContainer
 import io.github.rosemoe.sora.widget.CodeEditor
+
+/** One inline diagnostic: a rounded wavy underline plus a tooltip with the brief message. */
+data class EditorDiagnostic(
+    val startLine: Int,
+    val endLine: Int,
+    val brief: String,
+    val detail: String = "",
+    /** Error findings get a stronger red squiggle; everything else uses the warning style. */
+    val isError: Boolean = false,
+)
 
 /** Snapshot of everything the editor needs to render one file. */
 data class EditorConfig(
@@ -33,6 +46,8 @@ data class EditorConfig(
     val gutterMarks: Map<Int, androidx.compose.ui.graphics.Color> = emptyMap(),
     /** Total line count, used to position spine marks proportionally. */
     val lineCount: Int = 0,
+    /** Inline squiggles/tooltips drawn directly in the text (wavy underline = rounded). */
+    val diagnostics: List<EditorDiagnostic> = emptyList(),
 )
 
 /**
@@ -115,6 +130,39 @@ fun BerryCodeEditor(
                 editor.ensurePositionVisible(safe, 0)
                 initialHandle.value = null
             }
+        }
+    }
+
+    // Diagnostic squiggles + tooltips come from review findings. They're mapped to
+    // character offsets each time findings or text changes, then handed to Sora's
+    // container, which draws the indicators without ever blocking a frame.
+    LaunchedEffect(config.path, config.text, config.diagnostics) {
+        runCatching {
+            val container = DiagnosticsContainer()
+            val content = editor.text
+            config.diagnostics.forEach { d ->
+                val startLine = (d.startLine - 1).coerceIn(0, (content.lineCount - 1).coerceAtLeast(0))
+                val endLine = (d.endLine - 1).coerceIn(startLine, (content.lineCount - 1).coerceAtLeast(0))
+                val lineLen = content.getColumnCount(startLine)
+                val startChar = if (content.lineCount > 0) {
+                    content.getCharIndex(startLine, 0)
+                } else 0
+                val endChar = if (content.lineCount > 0) {
+                    content.getCharIndex(endLine, lineLen) + 1
+                } else 0
+                if (endChar > startChar) {
+                    container.addDiagnostic(
+                        DiagnosticRegion(
+                            startChar,
+                            endChar,
+                            (if (d.isError) DiagnosticRegion.SEVERITY_ERROR else DiagnosticRegion.SEVERITY_WARNING).toShort(),
+                            0L,
+                            DiagnosticDetail(d.brief, d.detail, emptyList(), null),
+                        ),
+                    )
+                }
+            }
+            editor.setDiagnostics(container)
         }
     }
 

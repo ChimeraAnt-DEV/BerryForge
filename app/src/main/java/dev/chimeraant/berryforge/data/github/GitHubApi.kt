@@ -34,8 +34,19 @@ class GitHubApi(private val auth: GitHubAuth) {
     /** The signed-in login, used to scope caches per account. */
     val activeLogin: String? get() = auth.activeLogin
 
-    private fun token(): String =
-        requireNotNull(auth.activeToken) { "Not signed in to GitHub" }
+    /** Resolves the API token or throws a catchable [GitHubException] instead of crashing. */
+    private fun token(): String {
+        val value = auth.activeToken
+        if (value.isNullOrBlank()) {
+            throw GitHubException(
+                401,
+                "auth",
+                "You are not signed in and no GitHub token is set. " +
+                    "Sign in, or paste a personal access token in Settings → GitHub.",
+            )
+        }
+        return value
+    }
 
     // ---- Request helpers ----
 

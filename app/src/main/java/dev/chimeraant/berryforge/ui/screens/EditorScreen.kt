@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -43,6 +44,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chimeraant.berryforge.ai.FindingCategory
 import dev.chimeraant.berryforge.ai.ReviewFinding
 import dev.chimeraant.berryforge.ai.ReviewResult
+import dev.chimeraant.berryforge.ai.color
 import dev.chimeraant.berryforge.ai.Severity
 import dev.chimeraant.berryforge.editor.BerryCodeEditor
 import dev.chimeraant.berryforge.editor.EditorConfig
@@ -59,12 +61,22 @@ import dev.chimeraant.berryforge.ui.components.BerrySheet
 import dev.chimeraant.berryforge.ui.components.BerrySnackbar
 import dev.chimeraant.berryforge.ui.components.BerrySurface
 import dev.chimeraant.berryforge.ui.components.BerryTextField
+import dev.chimeraant.berryforge.ui.components.HtmlPreviewButton
+import dev.chimeraant.berryforge.ui.components.HtmlPreviewSheet
+import dev.chimeraant.berryforge.ui.components.MechaFloatingButton
+import dev.chimeraant.berryforge.ui.components.MechaRole
+import dev.chimeraant.berryforge.ui.components.MechaSheet
+import dev.chimeraant.berryforge.ui.components.MechaTurn
+import dev.chimeraant.berryforge.ui.components.ModelFormats
+import dev.chimeraant.berryforge.ui.components.ModelPreviewSheet
 import dev.chimeraant.berryforge.ui.design.BerryColors
 import dev.chimeraant.berryforge.ui.design.BerryIcons
+import dev.chimeraant.berryforge.ui.design.BerryMotion
 import dev.chimeraant.berryforge.ui.design.BerryRadius
 import dev.chimeraant.berryforge.ui.design.BerrySize
 import dev.chimeraant.berryforge.ui.design.BerrySpacing
 import dev.chimeraant.berryforge.ui.design.BerryType
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -104,10 +116,22 @@ fun EditorScreen(
     var review by remember(path) { mutableStateOf<ReviewResult?>(null) }
     var reviewing by remember { mutableStateOf(false) }
     var reviewSheetOpen by remember { mutableStateOf(false) }
+    var mechaSheetOpen by remember { mutableStateOf(false) }
+    var mechaThinking by remember { mutableStateOf(false) }
+    var mechaTurns by remember(path) {
+        mutableStateOf(
+            listOf(MechaTurn(MechaRole.Bot, "I'm Mecha. Ask me about this file, or tap a finding below and I'll fix it or explain the mistake step by step.")),
+        )
+    }
     var findSheetOpen by remember { mutableStateOf(false) }
     var commitSheetOpen by remember { mutableStateOf(false) }
     var findQuery by remember { mutableStateOf("") }
     var replaceWith by remember { mutableStateOf("") }
+    var previewVisible by remember { mutableStateOf(false) }
+    var htmlPreviewSeen by remember { mutableStateOf(false) }
+    val isHtml = path.endsWith(".html", ignoreCase = true) || path.endsWith(".htm", ignoreCase = true)
+    val isModel = ModelFormats.isModelFormat(path)
+    var modelViewMode by remember(path) { mutableStateOf(false) }
 
     // Load the file through the view model, which resolves mirror -> cache -> GitHub and
     // records the blob SHA at every step so a later commit has a base to update against.
@@ -146,6 +170,11 @@ fun EditorScreen(
     }
     LaunchedEffect(Unit) {
         viewModel.settings.tabWidth.collect { tabWidth = it }
+    }
+    LaunchedEffect(Unit) {
+        // First time only: after the user has seen the explainer it stays dismissed
+        // for every later session, but the preview control itself remains available.
+        runCatching { htmlPreviewSeen = viewModel.settings.htmlPreviewSeen.first() }
     }
 
     // Dirty if the buffer differs from the baseline, or if the workspace still has
@@ -216,6 +245,11 @@ fun EditorScreen(
                         )
                     },
                 )
+                isModel && modelViewMode -> ModelPreviewSheet(
+                    path = path,
+                    rawText = text,
+                    modifier = Modifier.fillMaxSize(),
+                )
                 else -> BerryCodeEditor(
                     config = EditorConfig(
                         path = path,
@@ -225,6 +259,15 @@ fun EditorScreen(
                         lineNumbers = lineNumbers,
                         tabWidth = tabWidth,
                         gutterMarks = review?.findings.orEmpty().associate { it.startLine to it.severity.gutterColor() },
+                        diagnostics = review?.findings.orEmpty().map { f ->
+                            dev.chimeraant.berryforge.editor.EditorDiagnostic(
+                                startLine = f.startLine,
+                                endLine = f.endLine,
+                                brief = f.message,
+                                detail = f.suggestion ?: f.category.label,
+                                isError = f.severity == dev.chimeraant.berryforge.ai.Severity.Error,
+                            )
+                        },
                     ),
                     modifier = Modifier.fillMaxSize(),
                     initialLine = initialLine,
@@ -237,9 +280,10 @@ fun EditorScreen(
             }
 
             // Severity spine for review findings, pinned to the right edge.
-            if (!review?.findings.isNullOrEmpty()) {
+            val findings = review?.findings
+            if (!findings.isNullOrEmpty()) {
                 dev.chimeraant.berryforge.editor.FindingsSpine(
-                    marks = review!!.findings.associate { it.startLine to it.severity.gutterColor() },
+                    marks = findings.associate { it.startLine to it.severity.gutterColor() },
                     lineCount = text.lines().size,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -249,7 +293,7 @@ fun EditorScreen(
                     onClick = { reviewSheetOpen = true },
                 )
                 FindingsRail(
-                    findings = review!!.findings,
+                    findings = findings,
                     modifier = Modifier.align(Alignment.TopEnd).padding(BerrySpacing.md),
                     onClick = { reviewSheetOpen = true },
                 )
@@ -258,9 +302,21 @@ fun EditorScreen(
 
         EditorActionStrip(
             dirty = dirty,
+            isHtml = isHtml,
+            isModel = isModel,
+            isModelView = modelViewMode,
+            onToggleModelView = { modelViewMode = !modelViewMode },
+            previewHintShown = htmlPreviewSeen,
             onUndo = { viewModel.toast("Undo") },
             onFormat = { viewModel.toast("Formatting") },
             onBuild = onOpenBuildLog,
+            onPreview = {
+                if (!htmlPreviewSeen) {
+                    htmlPreviewSeen = true
+                    scope.launch { viewModel.settings.setHtmlPreviewSeen(true) }
+                }
+                previewVisible = true
+            },
         )
     }
 
@@ -270,6 +326,19 @@ fun EditorScreen(
             icon = BerryIcons.Info,
             modifier = Modifier.align(Alignment.TopEnd),
         )
+
+        // Mecha — the animated assistant. Floats just above the action strip.
+        Box(
+            Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = BerrySpacing.lg, bottom = 88.dp),
+        ) {
+            MechaFloatingButton(
+                expanded = mechaSheetOpen,
+                thinking = mechaThinking,
+                onToggle = { mechaSheetOpen = !mechaSheetOpen },
+            )
+        }
     }
 
     ReviewSheet(
@@ -322,6 +391,70 @@ fun EditorScreen(
             persistedDirty = false
         },
     )
+
+    // Live HTML preview floats above everything so it never fights the sheet z-order.
+    if (path.endsWith(".html", ignoreCase = true) || path.endsWith(".htm", ignoreCase = true)) {
+        HtmlPreviewSheet(
+            visible = previewVisible,
+            htmlSource = text,
+            onDismiss = { previewVisible = false },
+        )
+    }
+
+    // Mecha — the animated AI assistant for this file.
+    MechaSheet(
+        visible = mechaSheetOpen,
+        findings = review?.findings.orEmpty(),
+        thinking = mechaThinking,
+        turns = mechaTurns,
+        onDismiss = { mechaSheetOpen = false },
+        onFix = { finding ->
+            runCatching {
+                val replacement = (finding.suggestion ?: return@runCatching).trimEnd()
+                val lines = text.split('\n').toMutableList()
+                if (finding.startLine in 1..lines.size) {
+                    val start = (finding.startLine - 1).coerceIn(0, lines.lastIndex)
+                    val end = (finding.endLine - 1).coerceIn(start, lines.lastIndex)
+                    lines[start] = replacement
+                    if (end > start) {
+                        val removeFrom = start + 1
+                        repeat(end - start) { if (removeFrom < lines.size) lines.removeAt(removeFrom) }
+                    }
+                    text = lines.joinToString("\n")
+                    viewModel.toast("Mecha applied the fix for line ${finding.startLine}.")
+                }
+            }.onFailure { viewModel.toast("Mecha couldn't apply that fix cleanly — please edit it yourself.") }
+            mechaTurns = mechaTurns + MechaTurn(
+                MechaRole.Bot,
+                "I replaced the code around line ${finding.startLine}. The suggestion I used was: \"${finding.suggestion?.take(140)}\". Tap Undo if it isn't what you wanted.",
+            )
+        },
+        onExplain = { finding ->
+            mechaThinking = true
+            mechaTurns = mechaTurns + MechaTurn(
+                MechaRole.Bot,
+                explanationFor(finding) + "\n\n— Mecha",
+            )
+            scope.launch {
+                kotlinx.coroutines.delay(900)
+                mechaThinking = false
+            }
+        },
+    )
+}
+
+/** Plain-English walkthrough for a finding, constructed from data the reviewer already produced. */
+private fun explanationFor(finding: ReviewFinding): String {
+    val where = if (finding.startLine == finding.endLine) "line ${finding.startLine}" else "lines ${finding.startLine}–${finding.endLine}"
+    val effect = when (finding.severity) {
+        dev.chimeraant.berryforge.ai.Severity.Error -> "it will break compilation"
+        dev.chimeraant.berryforge.ai.Severity.Warning -> "it can cause a crash at runtime"
+        dev.chimeraant.berryforge.ai.Severity.Perf -> "it makes this code slower than it needs to be"
+        dev.chimeraant.berryforge.ai.Severity.DeadCode -> "it is never used"
+        dev.chimeraant.berryforge.ai.Severity.Info -> "it is worth reviewing"
+    }
+    return "Here's what's happening on $where. The flagged issue is ${finding.category.label.lowercase()}. In short, $effect. " +
+        "The reviewer: \"${finding.message}\"${finding.suggestion?.let { ". Try changing it to:\n\n$it" } ?: ""}"
 }
 
 @Composable
@@ -429,9 +562,15 @@ private fun FindingsRail(
 @Composable
 private fun EditorActionStrip(
     dirty: Boolean,
+    isHtml: Boolean,
+    isModel: Boolean,
+    isModelView: Boolean,
+    onToggleModelView: () -> Unit,
+    previewHintShown: Boolean,
     onUndo: () -> Unit,
     onFormat: () -> Unit,
     onBuild: () -> Unit,
+    onPreview: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxWidth().background(BerryColors.Surface1)) {
         BerryDivider()
@@ -444,11 +583,65 @@ private fun EditorActionStrip(
         ) {
             BerryButton("Undo", onUndo, variant = BerryButtonVariant.Ghost, size = BerryButtonSize.Sm, icon = BerryIcons.History)
             BerryButton("Format", onFormat, variant = BerryButtonVariant.Ghost, size = BerryButtonSize.Sm, icon = BerryIcons.Wand)
+            if (isModel) {
+                BerryButton(
+                    if (isModelView) "Code view" else "3D view",
+                    onToggleModelView,
+                    variant = if (isModelView) BerryButtonVariant.Secondary else BerryButtonVariant.Ghost,
+                    size = BerryButtonSize.Sm,
+                    icon = BerryIcons.Eye,
+                )
+            }
             Spacer(Modifier.weight(1f))
+            if (isHtml) {
+                // Animated blue→cyan preview control. A small Beta badge sits above it
+                // the first time, then hides so the strip stays calm on later edits.
+                HtmlPreviewCta(
+                    showBeta = !previewHintShown,
+                    onClick = onPreview,
+                )
+                Spacer(Modifier.width(BerrySpacing.xs))
+            }
             if (dirty) {
                 BerryChip("local changes", color = BerryColors.Warning, icon = BerryIcons.Diff)
             }
             BerryButton("Build", onBuild, variant = BerryButtonVariant.Secondary, size = BerryButtonSize.Sm, icon = BerryIcons.Hammer)
+        }
+        if (isHtml && !previewHintShown) {
+            Text(
+                "Live preview: tap the button to see your page update as you type, no save needed.",
+                style = BerryType.Caption,
+                color = BerryColors.TextTertiary,
+                modifier = Modifier.padding(horizontal = BerrySpacing.md).padding(bottom = BerrySpacing.sm),
+            )
+        }
+    }
+}
+
+/** The animated preview button with a one-time "BETA" badge floating above it. */
+@Composable
+private fun HtmlPreviewCta(
+    showBeta: Boolean,
+    onClick: () -> Unit,
+) {
+    Box {
+        HtmlPreviewButton(onClick = onClick)
+        if (showBeta) {
+            androidx.compose.animation.AnimatedVisibility(
+                visible = true,
+                enter = fadeIn(tween(BerryMotion.Fast)) +
+                    slideInVertically(tween(BerryMotion.Fast)) { it / 2 },
+                modifier = Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-10).dp),
+            ) {
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(BerryRadius.sm))
+                        .background(BerryColors.Warning.copy(alpha = 0.92f))
+                        .padding(horizontal = BerrySpacing.xs, vertical = BerrySpacing.xxs),
+                ) {
+                    Text("BETA", style = BerryType.Overline, color = BerryColors.Base)
+                }
+            }
         }
     }
 }
@@ -611,13 +804,7 @@ private fun FindingCard(finding: ReviewFinding) {
     }
 }
 
-internal fun Severity.gutterColor() = when (this) {
-    Severity.Error -> BerryColors.Danger
-    Severity.Warning -> BerryColors.Warning
-    Severity.Perf -> BerryColors.SynFunction
-    Severity.DeadCode -> BerryColors.TextTertiary
-    Severity.Info -> BerryColors.Edit
-}
+internal fun Severity.gutterColor() = this.color()
 
 internal fun Severity.icon() = when (this) {
     Severity.Error -> BerryIcons.Alert

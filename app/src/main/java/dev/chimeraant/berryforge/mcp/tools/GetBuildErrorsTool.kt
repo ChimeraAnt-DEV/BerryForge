@@ -12,6 +12,7 @@ import dev.chimeraant.berryforge.mcp.requireStr
 import dev.chimeraant.berryforge.mcp.str
 import dev.chimeraant.berryforge.sandbox.SandboxGuard
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -44,7 +45,8 @@ class GetBuildErrorsTool(
 
     override suspend fun invoke(args: JsonObject): JsonObject {
         val severity = (args.str("severity") ?: "error").lowercase()
-        val lines = gradle.logLines.first()
+        // No build in this session leaves logLines empty; a cold first() would throw.
+        val lines = gradle.logLines.firstOrNull() ?: emptyList()
         val errors = parser.errorsFrom(lines)
         val filtered = when (severity) {
             "warning", "warn" -> lines.filter { it.severity == dev.chimeraant.berryforge.build.LogSeverity.Warn }

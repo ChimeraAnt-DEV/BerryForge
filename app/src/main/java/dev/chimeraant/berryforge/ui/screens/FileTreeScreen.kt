@@ -1,7 +1,11 @@
 package dev.chimeraant.berryforge.ui.screens
 
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.draw.scale
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
@@ -229,12 +233,24 @@ private fun Crumb(text: String, root: Boolean, onClick: () -> Unit) {
 
 @Composable
 private fun TreeRow(entry: GhTreeEntry, dirty: Boolean, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.97f else 1f,
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMediumLow),
+        label = "treeRowScale",
+    )
     Row(
         Modifier
             .fillMaxWidth()
+            .scale(scale)
             .clip(RoundedCornerShape(BerryRadius.md))
             .background(BerryColors.Surface2.copy(alpha = 0.55f))
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onClick,
+            )
             .padding(horizontal = BerrySpacing.md, vertical = BerrySpacing.sm),
         verticalAlignment = Alignment.CenterVertically,
     ) {

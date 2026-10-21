@@ -35,6 +35,7 @@ class SettingsStore(private val context: Context) {
         val ownerCacheAt = stringPreferencesKey("owner_cache_at")
         val toolchainReady = booleanPreferencesKey("toolchain_ready")
         val onboardingDone = booleanPreferencesKey("onboarding_done")
+        val htmlPreviewSeen = booleanPreferencesKey("html_preview_seen")
     }
 
     val editorFontSize: Flow<Int> = context.settingsDataStore.data.map { it[Keys.editorFontSize] ?: 13 }
@@ -58,6 +59,8 @@ class SettingsStore(private val context: Context) {
     val ownerCacheAt: Flow<Long> = context.settingsDataStore.data.map { it[Keys.ownerCacheAt]?.toLongOrNull() ?: 0L }
     val toolchainReady: Flow<Boolean> = context.settingsDataStore.data.map { it[Keys.toolchainReady] ?: false }
     val onboardingDone: Flow<Boolean> = context.settingsDataStore.data.map { it[Keys.onboardingDone] ?: false }
+    /** True once the user has seen the HTML preview explainer (shown only once). */
+    val htmlPreviewSeen: Flow<Boolean> = context.settingsDataStore.data.map { it[Keys.htmlPreviewSeen] ?: false }
 
     suspend fun setEditorFontSize(v: Int) = put { it[Keys.editorFontSize] = v.coerceIn(9, 28) }
     suspend fun setTerminalFontSize(v: Int) = put { it[Keys.terminalFontSize] = v.coerceIn(9, 28) }
@@ -79,6 +82,7 @@ class SettingsStore(private val context: Context) {
     }
     suspend fun setToolchainReady(v: Boolean) = put { it[Keys.toolchainReady] = v }
     suspend fun setOnboardingDone(v: Boolean) = put { it[Keys.onboardingDone] = v }
+    suspend fun setHtmlPreviewSeen(v: Boolean) = put { it[Keys.htmlPreviewSeen] = v }
 
     private suspend fun put(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
         context.settingsDataStore.edit(block)
