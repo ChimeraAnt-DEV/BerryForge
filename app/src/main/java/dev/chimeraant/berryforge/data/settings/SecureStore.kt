@@ -61,6 +61,17 @@ class SecureStore(context: Context) {
     val activeToken: String?
         get() = activeLogin?.let { tokenFor(it) }
 
+    // ---- GitHub personal access token (override for commit/PR) ----
+    //
+    // A device-flow OAuth token is fine for reads, but committing and opening PRs on
+    // behalf of the user needs scopes that a PAT can carry (repo, workflow). Storing a
+    // PAT here lets commit/PR work even when the signed-in account token cannot, and it
+    // is preferred over the account token for all API calls.
+
+    var githubPat: String?
+        get() = prefs.getString(KEY_GITHUB_PAT, null)
+        set(value) = prefs.edit().putString(KEY_GITHUB_PAT, value).apply()
+
     // ---- LLM provider ----
 
     var llmApiKey: String?
@@ -107,6 +118,7 @@ class SecureStore(context: Context) {
         private const val KEY_ACCOUNTS = "accounts"
         private const val KEY_ACTIVE = "active_login"
         private const val KEY_TOKEN_PREFIX = "token_"
+        private const val KEY_GITHUB_PAT = "github_pat"
         private const val KEY_LLM_KEY = "llm_api_key"
         private const val KEY_MCP_TOKEN = "mcp_bearer"
         private const val KEY_NGROK = "ngrok_authtoken"
