@@ -58,6 +58,7 @@ fun BerryApp(viewModel: BerryViewModel) {
     var jumpToLine by remember { mutableStateOf<Int?>(null) }
     val onboardingDone by viewModel.onboardingDone.collectAsStateWithLifecycle()
     val toolchainReady by viewModel.toolchainReady.collectAsStateWithLifecycle()
+    val openRepoNow by viewModel.openRepo.collectAsStateWithLifecycle()
 
     LaunchedEffect(signedIn, onboardingDone, toolchainReady) {
         if (signedIn && !onboardingDone && !toolchainReady) showWizard = true
@@ -121,7 +122,17 @@ fun BerryApp(viewModel: BerryViewModel) {
                                 } else {
                                     FileTreeScreen(
                                         viewModel = viewModel,
-                                        onOpenFile = { openFilePath = it },
+                                        onOpenFile = { path ->
+                                            // Editing from the Repos tab belongs on the
+                                            // Editor tab: switch the bottom bar there so
+                                            // the user-landing matches the highlighted tab.
+                                            if (destination == Destination.Repos) {
+                                                destination = Destination.Editor
+                                                openFilePath = path
+                                            } else {
+                                                openFilePath = path
+                                            }
+                                        },
                                         onBack = { viewModel.closeRepo() },
                                         onProfileClick = { showProfile = true },
                                         onManageAccounts = { showAccounts = true },
@@ -190,7 +201,22 @@ fun BerryApp(viewModel: BerryViewModel) {
                 }
                 BerryBottomBar(
                     current = destination,
-                    onSelect = { destination = it },
+                    onSelect = { selected ->
+                        // Leaving the editor closes the open file and the jump target:
+                        // otherwise switching tabs stayed in edit mode because the
+                        // open-file branch is checked before the destination branches.
+                        if (selected != destination) {
+                            openFilePath = null
+                            jumpToLine = null
+                        }
+                        // Re-tapping the current tab with a file open exits edit mode
+                        // back to that tab's root.
+                        if (selected == destination && openFilePath != null && openRepoNow != null) {
+                            openFilePath = null
+                            jumpToLine = null
+                        }
+                        destination = selected
+                    },
                 )
             }
         }
