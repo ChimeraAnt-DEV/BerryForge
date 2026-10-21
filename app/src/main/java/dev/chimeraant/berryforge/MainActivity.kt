@@ -52,11 +52,12 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         // Any contrast scrim Android enforces on the bars fights the anonymous bars:
         // the bars are hidden anyway, and a translucent grey strip peeks out while a
-        // transient edge-swipe reveals them.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            window.isNavigationBarContrastEnforced = false
-        }
+        // transient edge-swipe reveals them. Both contrast flags require API 29 (Q);
+        // the previous guard on O (API 26) let the navigation-bar setter run on
+        // Android 8/9, where the method does not exist, and crashed on launch with
+        // NoSuchMethodError before setContent ever ran.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
             window.isStatusBarContrastEnforced = false
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
