@@ -141,42 +141,59 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
 
     init {
         viewModelScope.launch {
-            container.settings.onboardingDone.collect {
-                _onboardingDone.value = it
+            // A corrupt or half-written DataStore file makes the flow throw instead of
+            // emitting. Catching it keeps the app launchable (flags default to false)
+            // rather than closing right after the splash background paints.
+            runCatching {
+                container.settings.onboardingDone.collect {
+                    _onboardingDone.value = it
+                    markSettingsBootstrappedIfReady()
+                }
+            }.onFailure { markSettingsBootstrappedIfReady() }
+        }
+        viewModelScope.launch {
+            runCatching {
+                container.settings.toolchainReady.collect {
+                    _toolchainReady.value = it
+                    markSettingsBootstrappedIfReady()
+                }
+            }.onFailure { markSettingsBootstrappedIfReady() }
+        }
+        viewModelScope.launch {
+            runCatching {
+                // The onboarding/toolchain flags are just persisted intentions; the ground
+                // truth is what actually landed on disk. Re-read it on every launch so a
+                // completed install is never re-offered and an interrupted one is.
+                container.toolchain.refreshState()
+                val ready = container.toolchain.isInstalled()
+                _toolchainReady.value = ready
                 markSettingsBootstrappedIfReady()
+                if (ready) container.settings.setToolchainReady(true)
+            }.onFailure { markSettingsBootstrappedIfReady() }
+        }
+        viewModelScope.launch {
+            runCatching {
+                container.sessions.pending.collect { _pendingApprovals.value = it }
             }
-        }
-        viewModelScope.launch {
-            container.settings.toolchainReady.collect {
-                _toolchainReady.value = it
-                markSettingsBootstrappedIfReady()
-            }
-        }
-        viewModelScope.launch {
-            // The onboarding/toolchain flags are just persisted intentions; the ground
-            // truth is what actually landed on disk. Re-read it on every launch so a
-            // completed install is never re-offered and an interrupted one is.
-            container.toolchain.refreshState()
-            val ready = container.toolchain.isInstalled()
-            _toolchainReady.value = ready
-            markSettingsBootstrappedIfReady()
-            if (ready) container.settings.setToolchainReady(true)
-        }
-        viewModelScope.launch {
-            container.sessions.pending.collect { _pendingApprovals.value = it }
         }
         viewModelScope.launch { restoreSession() }
     }
 
     private suspend fun restoreSession() {
-        val login = container.secure.activeLogin
-        val token = container.secure.activeToken
-        if (login != null && token != null) {
-            _signedIn.value = true
-            container.repoCache.getProfile(login)?.let { _user.value = it }
-            refreshOwnerStatus()
-            loadRepos(force = false)
-            fetchProfile()
+        // Everything beneath here can throw (Keystore failure that slipped past the
+        // SecureStore resilience, DataStore IO, flaky network). A crash at launch from a
+        // restore path would close the app right after the splash background, so the
+        // restore is entirely best-effort: failures degrade to signed-out.
+        runCatching {
+            val login = container.secure.activeLogin
+            val token = container.secure.activeToken
+            if (login != null && token != null) {
+                _signedIn.value = true
+                container.repoCache.getProfile(login)?.let { _user.value = it }
+                refreshOwnerStatus()
+                loadRepos(force = false)
+                fetchProfile()
+            }
         }
     }
 
@@ -333,31 +350,33 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
      */
     fun refreshOwnerStatus(force: Boolean = false) {
         viewModelScope.launch {
-            val login = container.secure.activeLogin
-            val cachedAt = container.settings.ownerCacheAt.first()
-            val cached = container.settings.ownerCache.first()
-            val fresh = System.currentTimeMillis() - cachedAt < OWNER_CACHE_TTL_MS
-            val hasCache = !cached.isNullOrBlank()
+            runCatching {
+                val login = container.secure.activeLogin
+                val cachedAt = container.settings.ownerCacheAt.first()
+                val cached = container.settings.ownerCache.first()
+                val fresh = System.currentTimeMillis() - cachedAt < OWNER_CACHE_TTL_MS
+                val hasCache = !cached.isNullOrBlank()
 
-            if (!force && fresh && hasCache) {
-                applyOwnerStatus(login, parseOrgs(cached))
-                return@launch
-            }
+                if (!force && fresh && hasCache) {
+                    applyOwnerStatus(login, parseOrgs(cached))
+                    return@launch
+                }
 
-            val token = container.secure.activeToken ?: run {
-                // Not signed in: the login check can still apply if we know the login.
+                val token = container.secure.activeToken ?: run {
+                    // Not signed in: the login check can still apply if we know the login.
+                    applyOwnerStatus(login, emptyList())
+                    return@launch
+                }
+
+                // Apply the login-based result immediately so the badge does not wait on the
+                // network, then refine it once the org list arrives.
                 applyOwnerStatus(login, emptyList())
-                return@launch
-            }
 
-            // Apply the login-based result immediately so the badge does not wait on the
-            // network, then refine it once the org list arrives.
-            applyOwnerStatus(login, emptyList())
-
-            container.auth.fetchOrgs(token).onSuccess { list ->
-                val names = list.map { it.login }
-                container.settings.setOwnerCache(names.joinToString(","), System.currentTimeMillis())
-                applyOwnerStatus(login, names)
+                container.auth.fetchOrgs(token).onSuccess { list ->
+                    val names = list.map { it.login }
+                    container.settings.setOwnerCache(names.joinToString(","), System.currentTimeMillis())
+                    applyOwnerStatus(login, names)
+                }
             }
         }
     }
