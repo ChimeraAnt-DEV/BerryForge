@@ -132,6 +132,7 @@ class CommitFlow(
         // ---- Build blobs for every staged file, in one pass ----
         val newShas = HashMap<String, String>()
         val entries = mutableListOf<TreeEntry>()
+        var publishedCommitSha = ""
 
         try {
             toCommit.forEach { path ->
@@ -156,7 +157,7 @@ class CommitFlow(
             // ---- One tree, one commit, one ref update ----
             val baseTree = api.commitTreeSha(owner, name, parentSha)
             val treeSha = api.createTree(owner, name, entries, baseTree)
-            val commitSha = api.createCommit(
+            publishedCommitSha = api.createCommit(
                 owner = owner,
                 name = name,
                 message = message,
@@ -165,7 +166,7 @@ class CommitFlow(
             )
 
             try {
-                api.updateRef(owner, name, targetBranch, commitSha, force = force)
+                api.updateRef(owner, name, targetBranch, publishedCommitSha, force = force)
             } catch (error: GitHubException) {
                 if (error.code == 422 && !force) {
                     // The branch moved while we were building the commit. Nothing was
@@ -220,7 +221,9 @@ class CommitFlow(
 
         return CommitOutcome(
             branch = targetBranch,
-            commitSha = newShas.values.lastOrNull().orEmpty(),
+            // The SHA of the commit object GitHub created — not a blob SHA. The old
+            // value was the last file's blob sha, which broke links back to the commit.
+            commitSha = publishedCommitSha,
             files = toCommit,
             pushed = true,
             prUrl = prUrl,

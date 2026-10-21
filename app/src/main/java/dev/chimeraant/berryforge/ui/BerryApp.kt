@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -98,8 +97,16 @@ fun BerryApp(viewModel: BerryViewModel) {
                             file != null -> EditorScreen(
                                 viewModel = viewModel,
                                 path = file,
-                                onBack = { openFilePath = null },
-                                onOpenBuildLog = { destination = Destination.Build; openFilePath = null },
+                                initialLine = jumpToLine,
+                                onBack = {
+                                    openFilePath = null
+                                    jumpToLine = null
+                                },
+                                onOpenBuildLog = {
+                                    destination = Destination.Build
+                                    openFilePath = null
+                                    jumpToLine = null
+                                },
                             )
 
                             dest == Destination.Repos -> {
@@ -130,7 +137,7 @@ fun BerryApp(viewModel: BerryViewModel) {
                                 },
                                 onOpenApkTester = { showApkTester = true },
                                 onProfileClick = { showProfile = true },
-                                        onManageAccounts = { showAccounts = true },
+                                onManageAccounts = { showAccounts = true },
                             )
 
                             dest == Destination.Editor -> {
@@ -156,13 +163,13 @@ fun BerryApp(viewModel: BerryViewModel) {
                             dest == Destination.Terminal -> TerminalScreen(
                                 viewModel = viewModel,
                                 onProfileClick = { showProfile = true },
-                                        onManageAccounts = { showAccounts = true },
+                                onManageAccounts = { showAccounts = true },
                             )
 
                             dest == Destination.Agent -> AgentScreen(
                                 viewModel = viewModel,
                                 onProfileClick = { showProfile = true },
-                                        onManageAccounts = { showAccounts = true },
+                                onManageAccounts = { showAccounts = true },
                             )
 
                             dest == Destination.Settings -> SettingsScreen(
@@ -195,6 +202,24 @@ fun BerryApp(viewModel: BerryViewModel) {
             icon = BerryIcons.Info,
             modifier = Modifier.align(Alignment.TopEnd),
         )
+
+        // Rendered last so it sits above every destination and the bottom bar: a
+        // first-run toolchain install cannot be skipped silently by tapping around.
+        // Previously showWizard was set but the wizard was never composed — the flag
+        // had no consumer, and first-run installs were impossible.
+        if (showWizard && signedIn) {
+            ToolchainWizardScreen(
+                viewModel = viewModel,
+                onDone = {
+                    showWizard = false
+                    viewModel.markOnboardingDone()
+                },
+                onSkip = {
+                    showWizard = false
+                    viewModel.markOnboardingDone()
+                },
+            )
+        }
     }
 }
 

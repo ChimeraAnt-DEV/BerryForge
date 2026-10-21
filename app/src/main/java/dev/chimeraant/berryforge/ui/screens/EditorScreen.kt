@@ -81,6 +81,7 @@ fun EditorScreen(
     path: String,
     onBack: () -> Unit,
     onOpenBuildLog: () -> Unit,
+    initialLine: Int? = null,
     modifier: Modifier = Modifier,
 ) {
     val repo by viewModel.openRepo.collectAsStateWithLifecycle()
@@ -183,9 +184,14 @@ fun EditorScreen(
             onCommit = { commitSheetOpen = true },
             onSave = {
                 scope.launch {
-                    viewModel.workspace.writeLocal(repoValue.ownerLogin, repoValue.name, path, text)
-                    persistedDirty = true
-                    viewModel.toast("Saved to the local working copy.")
+                    runCatching {
+                        viewModel.workspace.writeLocal(repoValue.ownerLogin, repoValue.name, path, text)
+                    }.onSuccess {
+                        persistedDirty = true
+                        viewModel.toast("Saved to the local working copy.")
+                    }.onFailure { failure ->
+                        viewModel.toast("Could not save: ${failure.message ?: "unknown error"}")
+                    }
                 }
             },
             onReload = { reloadToken++ },
@@ -202,7 +208,13 @@ fun EditorScreen(
                     body = error ?: "",
                     accent = BerryColors.Danger,
                     modifier = Modifier.fillMaxSize(),
-                    action = { BerryButton("Retry", onClick = { viewModel.toast("Pull to reopen") }, variant = BerryButtonVariant.Secondary) },
+                    action = {
+                        BerryButton(
+                            "Retry",
+                            onClick = { reloadToken++ },
+                            variant = BerryButtonVariant.Secondary,
+                        )
+                    },
                 )
                 else -> BerryCodeEditor(
                     config = EditorConfig(
@@ -215,6 +227,7 @@ fun EditorScreen(
                         gutterMarks = review?.findings.orEmpty().associate { it.startLine to it.severity.gutterColor() },
                     ),
                     modifier = Modifier.fillMaxSize(),
+                    initialLine = initialLine,
                     onContentChange = { text = it },
                     onSelectionChange = { line, column ->
                         cursorLine = line + 1

@@ -5,8 +5,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -44,6 +46,7 @@ data class EditorConfig(
 fun BerryCodeEditor(
     config: EditorConfig,
     modifier: Modifier = Modifier,
+    initialLine: Int? = null,
     onContentChange: (String) -> Unit = {},
     onSelectionChange: (line: Int, column: Int) -> Unit = { _, _ -> },
 ) {
@@ -92,6 +95,10 @@ fun BerryCodeEditor(
         runCatching { editor.isEditable = !config.readOnly }
     }
 
+    // Deep-link target: consumed once per file open (e.g. from a build error), then
+    // cleared so later typing never jumps the cursor back.
+    val initialHandle = remember(config.path) { mutableStateOf(initialLine) }
+
     // Only push text in when it differs, otherwise the cursor jumps on every keystroke.
     LaunchedEffect(config.path, config.text) {
         runCatching {
@@ -101,6 +108,12 @@ fun BerryCodeEditor(
                 editor.setText(config.text)
                 val safeLine = line.coerceAtMost((editor.text.lineCount - 1).coerceAtLeast(0))
                 editor.setSelection(safeLine, column.coerceAtMost(editor.text.getColumnCount(safeLine)))
+            }
+            initialHandle.value?.let { wanted ->
+                val safe = (wanted - 1).coerceIn(0, (editor.text.lineCount - 1).coerceAtLeast(0))
+                editor.setSelection(safe, 0)
+                editor.ensurePositionVisible(safe, 0)
+                initialHandle.value = null
             }
         }
     }

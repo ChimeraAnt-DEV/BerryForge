@@ -93,7 +93,10 @@ fun TerminalScreen(
             },
         )
 
-        // Quick command strip — the shims make these all work in the sandbox.
+        // Quick command strip — only tools that actually resolve in the sandbox are
+        // listed. git and curl were previously shown here, but Android ships neither
+        // binary and the old shims called an endpoint that never existed, so tapping
+        // them only ever produced "command not found".
         Row(
             Modifier
                 .fillMaxWidth()
@@ -101,11 +104,11 @@ fun TerminalScreen(
             horizontalArrangement = Arrangement.spacedBy(BerrySpacing.sm),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            BerryChip("git", icon = BerryIcons.Branch, color = BerryColors.TextSecondary)
             BerryChip("gradle", icon = BerryIcons.Hammer, color = BerryColors.TextSecondary)
             BerryChip("javac", icon = BerryIcons.Code, color = BerryColors.TextSecondary)
             BerryChip("adb", icon = BerryIcons.Server, color = BerryColors.TextSecondary)
-            BerryChip("curl", icon = BerryIcons.Globe, color = BerryColors.TextSecondary)
+            BerryChip("apksigner", icon = BerryIcons.Layers, color = BerryColors.TextSecondary)
+            BerryChip("gradlew", icon = BerryIcons.Terminal, color = BerryColors.TextSecondary)
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {

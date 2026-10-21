@@ -82,7 +82,9 @@ fun FileTreeScreen(
     // Refresh the dirty set whenever the tree or the open folder changes, off the main
     // thread: the workspace persists its state to disk, so this is a suspend call.
     LaunchedEffect(repoValue.fullName, path, viewModel.tree.value) {
-        dirtyPaths = viewModel.workspace.dirtyPaths(repoValue.ownerLogin, repoValue.name).toSet()
+        dirtyPaths = runCatching {
+            viewModel.workspace.dirtyPaths(repoValue.ownerLogin, repoValue.name).toSet()
+        }.getOrDefault(emptySet())
     }
 
     val children = remember(repoValue.fullName, path, viewModel.tree.value, query) {
