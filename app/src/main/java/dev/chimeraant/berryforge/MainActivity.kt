@@ -50,6 +50,15 @@ class MainActivity : ComponentActivity() {
      */
     private fun enterImmersiveFullscreen() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        // Any contrast scrim Android enforces on the bars fights the anonymous bars:
+        // the bars are hidden anyway, and a translucent grey strip peeks out while a
+        // transient edge-swipe reveals them.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            window.isNavigationBarContrastEnforced = false
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isStatusBarContrastEnforced = false
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.insetsController?.let { controller ->
                 controller.hide(
@@ -81,6 +90,11 @@ class MainActivity : ComponentActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) enterImmersiveFullscreen()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        enterImmersiveFullscreen()
     }
 }
 
