@@ -167,6 +167,7 @@ object BerryIcons {
     val Layers = stroke("layers", "M12 3.5 L21 8.5 L12 13.5 L3 8.5 Z", "M3 12.5 L12 17.5 L21 12.5", "M3 16.5 L12 21.5 L21 16.5")
     val Rocket = stroke("rocket", "M14.5 3.5 C17.5 4.5 19.5 6.5 20.5 9.5 L12 18 L6 12 Z", "M6 12 L4 10 V14 L6 12", "M12 18 L14 20 H10 L12 18", "M9 15 L6.5 17.5", "M15.5 8.5 m-1.4 0 a1.4 1.4 0 1 0 2.8 0 a1.4 1.4 0 1 0 -2.8 0")
     val Zap = stroke("zap", "M4 14 L13 3 L11 10 H20 L11 21 L13 14 Z")
+    val Send = stroke("send", "M3.5 12 L20.5 4 L16.5 20 L12.5 13.5 L3.5 12 Z", "M12.5 13.5 L20.5 4")
     val Bell = stroke("bell", "M6.5 16.5 V10.5 A5.5 5.5 0 0 1 17.5 10.5 V16.5 L19 18.5 H5 Z", "M10 18.5 A2 2 0 0 0 14 18.5")
     val Palette = stroke("palette", "M12 3.5 C7.3 3.5 3.5 7 3.5 11.4 C3.5 15.8 7 18.6 11 18.6 C12.4 18.6 13 18 13 17.2 C13 16.3 12.2 15.8 12.2 14.8 C12.2 13.7 13.1 12.9 14.3 12.9 H16.2 C18.5 12.9 20.5 11.4 20.5 8.9 C20.5 5.7 16.8 3.5 12 3.5 Z", "M7.5 9 H7.52", "M11 7 H11.02", "M15.5 8 H15.52", "M6.5 13 H6.52")
     val Scroll = stroke("scroll", "M12 3.5 H18.5 A2 2 0 0 1 20.5 5.5 V17.5 A3 3 0 0 0 23.5 20.5", "M12 3.5 A2 2 0 0 0 10 5.5 V17.5 A3 3 0 0 1 7 20.5 H13.5 A3 3 0 0 0 16.5 17.5", "M5 20.5 A3 3 0 0 1 2 17.5 V5.5 A2 2 0 0 1 4 3.5 H10")
@@ -178,6 +179,6 @@ object BerryIcons {
         Refresh, External, Trash, Filter, Pencil, Wand, Lock, Key, Eye, Link, Play, Hammer, Bolt,
         Terminal, Bug, Server, Alert, Info, Warning, Clock, History, Sparkle, SparkleStroke, Robot,
         Shield, User, Crown, CrownStroke, Building, Star, Grid, Settings, Cloud, Wifi, Globe, Code, Tag,
-        Layers, Rocket, Zap, Bell, Palette, Scroll,
+        Layers, Rocket, Zap, Send, Bell, Palette, Scroll,
     )
 }

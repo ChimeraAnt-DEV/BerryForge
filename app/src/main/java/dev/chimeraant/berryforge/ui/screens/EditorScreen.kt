@@ -44,6 +44,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chimeraant.berryforge.ai.FindingCategory
 import dev.chimeraant.berryforge.ai.ReviewFinding
 import dev.chimeraant.berryforge.ai.ReviewResult
+import dev.chimeraant.berryforge.ai.color
 import dev.chimeraant.berryforge.ai.Severity
 import dev.chimeraant.berryforge.editor.BerryCodeEditor
 import dev.chimeraant.berryforge.editor.EditorConfig
@@ -62,6 +63,10 @@ import dev.chimeraant.berryforge.ui.components.BerrySurface
 import dev.chimeraant.berryforge.ui.components.BerryTextField
 import dev.chimeraant.berryforge.ui.components.HtmlPreviewButton
 import dev.chimeraant.berryforge.ui.components.HtmlPreviewSheet
+import dev.chimeraant.berryforge.ui.components.MechaFloatingButton
+import dev.chimeraant.berryforge.ui.components.MechaRole
+import dev.chimeraant.berryforge.ui.components.MechaSheet
+import dev.chimeraant.berryforge.ui.components.MechaTurn
 import dev.chimeraant.berryforge.ui.components.ModelFormats
 import dev.chimeraant.berryforge.ui.components.ModelPreviewSheet
 import dev.chimeraant.berryforge.ui.design.BerryColors
@@ -111,6 +116,13 @@ fun EditorScreen(
     var review by remember(path) { mutableStateOf<ReviewResult?>(null) }
     var reviewing by remember { mutableStateOf(false) }
     var reviewSheetOpen by remember { mutableStateOf(false) }
+    var mechaSheetOpen by remember { mutableStateOf(false) }
+    var mechaThinking by remember { mutableStateOf(false) }
+    var mechaTurns by remember(path) {
+        mutableStateOf(
+            listOf(MechaTurn(MechaRole.Bot, "I'm Mecha. Ask me about this file, or tap a finding below and I'll fix it or explain the mistake step by step.")),
+        )
+    }
     var findSheetOpen by remember { mutableStateOf(false) }
     var commitSheetOpen by remember { mutableStateOf(false) }
     var findQuery by remember { mutableStateOf("") }
@@ -247,6 +259,15 @@ fun EditorScreen(
                         lineNumbers = lineNumbers,
                         tabWidth = tabWidth,
                         gutterMarks = review?.findings.orEmpty().associate { it.startLine to it.severity.gutterColor() },
+                        diagnostics = review?.findings.orEmpty().map { f ->
+                            dev.chimeraant.berryforge.editor.EditorDiagnostic(
+                                startLine = f.startLine,
+                                endLine = f.endLine,
+                                brief = f.message,
+                                detail = f.suggestion ?: f.category.label,
+                                isError = f.severity == dev.chimeraant.berryforge.ai.Severity.Error,
+                            )
+                        },
                     ),
                     modifier = Modifier.fillMaxSize(),
                     initialLine = initialLine,
@@ -304,6 +325,19 @@ fun EditorScreen(
             icon = BerryIcons.Info,
             modifier = Modifier.align(Alignment.TopEnd),
         )
+
+        // Mecha — the animated assistant. Floats just above the action strip.
+        Box(
+            Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = BerrySpacing.lg, bottom = 88.dp),
+        ) {
+            MechaFloatingButton(
+                expanded = mechaSheetOpen,
+                thinking = mechaThinking,
+                onToggle = { mechaSheetOpen = !mechaSheetOpen },
+            )
+        }
     }
 
     ReviewSheet(
@@ -365,6 +399,61 @@ fun EditorScreen(
             onDismiss = { previewVisible = false },
         )
     }
+
+    // Mecha — the animated AI assistant for this file.
+    MechaSheet(
+        visible = mechaSheetOpen,
+        findings = review?.findings.orEmpty(),
+        thinking = mechaThinking,
+        turns = mechaTurns,
+        onDismiss = { mechaSheetOpen = false },
+        onFix = { finding ->
+            runCatching {
+                val replacement = (finding.suggestion ?: return@runCatching).trimEnd()
+                val lines = text.split('\n').toMutableList()
+                if (finding.startLine in 1..lines.size) {
+                    val start = (finding.startLine - 1).coerceIn(0, lines.lastIndex)
+                    val end = (finding.endLine - 1).coerceIn(start, lines.lastIndex)
+                    lines[start] = replacement
+                    if (end > start) {
+                        val removeFrom = start + 1
+                        repeat(end - start) { if (removeFrom < lines.size) lines.removeAt(removeFrom) }
+                    }
+                    text = lines.joinToString("\n")
+                    viewModel.toast("Mecha applied the fix for line ${finding.startLine}.")
+                }
+            }.onFailure { viewModel.toast("Mecha couldn't apply that fix cleanly — please edit it yourself.") }
+            mechaTurns = mechaTurns + MechaTurn(
+                MechaRole.Bot,
+                "I replaced the code around line ${finding.startLine}. The suggestion I used was: \"${finding.suggestion?.take(140)}\". Tap Undo if it isn't what you wanted.",
+            )
+        },
+        onExplain = { finding ->
+            mechaThinking = true
+            mechaTurns = mechaTurns + MechaTurn(
+                MechaRole.Bot,
+                explanationFor(finding) + "\n\n— Mecha",
+            )
+            scope.launch {
+                kotlinx.coroutines.delay(900)
+                mechaThinking = false
+            }
+        },
+    )
+}
+
+/** Plain-English walkthrough for a finding, constructed from data the reviewer already produced. */
+private fun explanationFor(finding: ReviewFinding): String {
+    val where = if (finding.startLine == finding.endLine) "line ${finding.startLine}" else "lines ${finding.startLine}–${finding.endLine}"
+    val effect = when (finding.severity) {
+        dev.chimeraant.berryforge.ai.Severity.Error -> "it will break compilation"
+        dev.chimeraant.berryforge.ai.Severity.Warning -> "it can cause a crash at runtime"
+        dev.chimeraant.berryforge.ai.Severity.Perf -> "it makes this code slower than it needs to be"
+        dev.chimeraant.berryforge.ai.Severity.DeadCode -> "it is never used"
+        dev.chimeraant.berryforge.ai.Severity.Info -> "it is worth reviewing"
+    }
+    return "Here's what's happening on $where. The flagged issue is ${finding.category.label.lowercase()}. In short, $effect. " +
+        "The reviewer: \"${finding.message}\"${finding.suggestion?.let { ". Try changing it to:\n\n$it" } ?: ""}"
 }
 
 @Composable
@@ -714,13 +803,7 @@ private fun FindingCard(finding: ReviewFinding) {
     }
 }
 
-internal fun Severity.gutterColor() = when (this) {
-    Severity.Error -> BerryColors.Danger
-    Severity.Warning -> BerryColors.Warning
-    Severity.Perf -> BerryColors.SynFunction
-    Severity.DeadCode -> BerryColors.TextTertiary
-    Severity.Info -> BerryColors.Edit
-}
+internal fun Severity.gutterColor() = this.color()
 
 internal fun Severity.icon() = when (this) {
     Severity.Error -> BerryIcons.Alert

@@ -41,6 +41,14 @@ object BerryColors {
     val AiDim = Color(0xFF5B3FB0)
     val AiGlow = Color(0x338B5CF6)
 
+    /** Neutral elevated chip/input background used across ephemeral surfaces. */
+    val Panel = Color(0xFF141B2D)
+
+    /** Mecha — the animated assistant bot. A fierce red reads clearly against the
+     *  navy chrome and leaves the purple AI accent to review findings. */
+    val Mecha = Color(0xFFFF4D5E)
+    val MechaBorder = Color(0x663DC1D1)
+
     /** Owner-only affordances. Never used for anything else. */
     val Owner = Color(0xFFE9B949)
     val OwnerDim = Color(0xFF9A7726)

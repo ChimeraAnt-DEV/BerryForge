@@ -23,6 +23,15 @@ import okhttp3.RequestBody.Companion.toRequestBody
 /** Severity of a review annotation. Drives the gutter marker colour. */
 enum class Severity { Error, Warning, Perf, DeadCode, Info }
 
+/** Stable accent colour for a finding severity, shared by the gutter, cards and Mecha. */
+fun Severity.color(): androidx.compose.ui.graphics.Color = when (this) {
+    Severity.Error -> androidx.compose.ui.graphics.Color(0xFFF0475C)
+    Severity.Warning -> androidx.compose.ui.graphics.Color(0xFFF5A524)
+    Severity.Perf -> androidx.compose.ui.graphics.Color(0xFF7DD3FC)
+    Severity.DeadCode -> androidx.compose.ui.graphics.Color(0xFF66718C)
+    Severity.Info -> androidx.compose.ui.graphics.Color(0xFF4C8DFF)
+}
+
 enum class FindingCategory(val label: String) {
     CompileError("Compile error"),
     CrashRisk("Runtime crash risk"),
