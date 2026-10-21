@@ -1,7 +1,10 @@
 package dev.chimeraant.berryforge.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,7 +17,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -52,9 +54,10 @@ import kotlinx.coroutines.launch
 /**
  * First-run toolchain wizard.
  *
- * Installs a JDK and the Android SDK build tools into app-private storage. Progress is
- * a real determinate bar driven by bytes downloaded and archive entries extracted — the
- * user can see it moving, which matters when the download is 300 MB on mobile data.
+ * A compact modal dialog (not a transparent full-bleed panel): it sits on a scrim over
+ * the app, has a solid opaque surface, and reports real determinate progress. On first
+ * composition the on-disk toolchain state is re-read so an already-extracted install is
+ * recognised immediately and the wizard never re-appears after everything was unpacked.
  */
 @Composable
 fun ToolchainWizardScreen(
@@ -70,8 +73,15 @@ fun ToolchainWizardScreen(
     var fraction by remember { mutableStateOf(0f) }
     var installLog by remember { mutableStateOf<List<String>>(emptyList()) }
     var running by remember { mutableStateOf(false) }
+    var checkedDisk by remember { mutableStateOf(false) }
 
+    // Re-read the installed state from disk before showing the wizard. This is what
+    // stops the "pops back up after everything extracted" loop: a completed install
+    // (but one whose end-of-run signal was missed, e.g. the app was killed during the
+    // final step) transitions straight to Ready instead of demanding a re-install.
     LaunchedEffect(Unit) {
+        viewModel.toolchain.refreshState()
+        checkedDisk = true
         launch {
             viewModel.toolchain.log.collect { installLog = it }
         }
@@ -95,186 +105,209 @@ fun ToolchainWizardScreen(
         label = "installProgress",
     )
 
+    // The dialog itself — an opaque panel, small relative to the screen, with a heavy
+    // scrim behind it so the modal is unmistakable against whatever destination is open.
     Box(
         modifier
             .fillMaxSize()
-            .systemBarsPadding(),
+            .background(BerryColors.Scrim)
+            .padding(BerrySpacing.xl),
+        contentAlignment = Alignment.Center,
     ) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(BerrySpacing.xxl),
+        Box(
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(BerryRadius.xxl))
+                .background(BerryColors.Surface2)
+                .padding(
+                    start = BerrySpacing.xl,
+                    end = BerrySpacing.xl,
+                    top = BerrySpacing.xl,
+                    bottom = BerrySpacing.lg,
+                ),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(BerryRadius.md))
-                        .background(BerryColors.Edit.copy(alpha = 0.14f)),
-                    contentAlignment = Alignment.Center,
-                ) { BerryIcon(BerryIcons.Hammer, null, size = BerrySize.iconLg, tint = BerryColors.Edit) }
-                Spacer(Modifier.width(BerrySpacing.md))
-                Column {
-                    Text("Set up the build toolchain", style = BerryType.Title, color = BerryColors.TextPrimary)
-                    Text("Installs into BerryForge's private storage", style = BerryType.Caption, color = BerryColors.TextTertiary)
-                }
-            }
-
-            Spacer(Modifier.height(BerrySpacing.xl))
-
-            Text(
-                "BerryForge builds on-device with the same binaries Termux uses: OpenJDK, " +
-                    "aapt2, d8, zipalign, apksigner and adb. Nothing is installed system-wide.",
-                style = BerryType.Body,
-                color = BerryColors.TextSecondary,
-            )
-
-            Spacer(Modifier.height(BerrySpacing.xl))
-
-            components.forEachIndexed { index, component ->
-                ComponentRow(
-                    component = component,
-                    status = statusFor(index, currentIndex, state),
-                    active = running && currentIndex == index,
-                )
-                Spacer(Modifier.height(BerrySpacing.sm))
-            }
-
-            Spacer(Modifier.height(BerrySpacing.lg))
-
-            // ---- Progress ----
-            if (running || state is ToolchainState.Ready || state is ToolchainState.Failed) {
-                val label = when (val current = state) {
-                    is ToolchainState.Downloading -> "${current.component} · ${formatBytes(current.bytes)} of ${formatBytes(current.total)}"
-                    is ToolchainState.Extracting -> "${current.component} · extracting ${current.entries} files"
-                    is ToolchainState.Ready -> "Toolchain ready"
-                    is ToolchainState.Failed -> current.message
-                    else -> ""
-                }
-                val accent = when (state) {
-                    is ToolchainState.Ready -> BerryColors.Success
-                    is ToolchainState.Failed -> BerryColors.Danger
-                    else -> BerryColors.Edit
-                }
-                Text(label, style = BerryType.Caption, color = accent)
-                Spacer(Modifier.height(BerrySpacing.sm))
-                Box(
+            AnimatedVisibility(
+                visible = checkedDisk,
+                enter = fadeIn(animationSpec = tween(BerryMotion.Fast)) +
+                    slideInVertically(initialOffsetY = { it / 4 }, animationSpec = tween(BerryMotion.Standard)),
+                label = "wizardAppear",
+            ) {
+                Column(
                     Modifier
                         .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(BerryRadius.pill))
-                        .background(BerryColors.Surface3),
+                        .verticalScroll(rememberScrollState()),
                 ) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth(if (state is ToolchainState.Ready) 1f else animatedFraction)
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(BerryRadius.pill))
-                            .background(accent),
-                    )
-                }
-                Spacer(Modifier.height(BerrySpacing.xl))
-            }
-
-            // ---- Install log: every step, and the real error when one occurs ----
-            if (installLog.isNotEmpty()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    BerryIcon(BerryIcons.Terminal, null, size = BerrySize.iconSm, tint = BerryColors.TextTertiary)
-                    Spacer(Modifier.width(BerrySpacing.sm))
-                    Text("INSTALL LOG", style = BerryType.Overline, color = BerryColors.TextTertiary)
-                }
-                Spacer(Modifier.height(BerrySpacing.sm))
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(160.dp)
-                        .clip(RoundedCornerShape(BerryRadius.md))
-                        .background(BerryColors.TermBackground)
-                        .verticalScroll(rememberScrollState())
-                        .padding(BerrySpacing.md),
-                ) {
-                    Column {
-                        installLog.forEach { line ->
-                            Text(
-                                line,
-                                style = BerryType.CodeMicro,
-                                color = if (line.startsWith("FAILED")) {
-                                    BerryColors.Danger
-                                } else {
-                                    BerryColors.TextSecondary
-                                },
-                            )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(BerryRadius.md))
+                                .background(BerryColors.Edit.copy(alpha = 0.14f)),
+                            contentAlignment = Alignment.Center,
+                        ) { BerryIcon(BerryIcons.Hammer, null, size = BerrySize.iconLg, tint = BerryColors.Edit) }
+                        Spacer(Modifier.width(BerrySpacing.md))
+                        Column {
+                            Text("Set up the build toolchain", style = BerryType.Title, color = BerryColors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text("Installs into BerryForge's private storage", style = BerryType.Caption, color = BerryColors.TextTertiary)
                         }
                     }
-                }
-                Spacer(Modifier.height(BerrySpacing.lg))
-            }
 
-            // ---- Actions ----
-            when {
-                state is ToolchainState.Ready -> BerryButton(
-                    text = "Continue",
-                    onClick = onDone,
-                    icon = BerryIcons.Check,
-                    fillWidth = true,
-                    size = BerryButtonSize.Lg,
-                )
-                state is ToolchainState.Failed -> Row(horizontalArrangement = Arrangement.spacedBy(BerrySpacing.sm)) {
-                    BerryButton(
-                        text = "Retry",
-                        onClick = {
-                            running = true
-                            scope.launch { viewModel.toolchain.install { index, _, value ->
-                                currentIndex = index
-                                fraction = value
-                            } }
-                        },
-                        icon = BerryIcons.Refresh,
-                        modifier = Modifier.weight(1f),
+                    Spacer(Modifier.height(BerrySpacing.lg))
+
+                    Text(
+                        "BerryForge builds on-device with the same binaries Termux uses: OpenJDK, " +
+                            "aapt2, d8, zipalign, apksigner and adb. Nothing is installed system-wide.",
+                        style = BerryType.Body,
+                        color = BerryColors.TextSecondary,
                     )
-                    BerryButton(
-                        text = "Skip",
-                        onClick = onSkip,
-                        variant = BerryButtonVariant.Ghost,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                else -> BerryButton(
-                    text = if (running) "Installing…" else "Install toolchain",
-                    onClick = {
-                        running = true
-                        fraction = 0f
-                        currentIndex = 0
-                        scope.launch {
-                            viewModel.toolchain.install { index, _, value ->
-                                currentIndex = index
-                                fraction = value
+
+                    Spacer(Modifier.height(BerrySpacing.lg))
+
+                    components.forEachIndexed { index, component ->
+                        ComponentRow(
+                            component = component,
+                            status = statusFor(index, currentIndex, state),
+                            active = running && currentIndex == index,
+                        )
+                        Spacer(Modifier.height(BerrySpacing.sm))
+                    }
+
+                    Spacer(Modifier.height(BerrySpacing.lg))
+
+                    // ---- Progress ----
+                    if (running || state is ToolchainState.Ready || state is ToolchainState.Failed) {
+                        val label = when (val current = state) {
+                            is ToolchainState.Downloading -> "${current.component} · ${formatBytes(current.bytes)} of ${formatBytes(current.total)}"
+                            is ToolchainState.Extracting -> "${current.component} · extracting ${current.entries} files"
+                            is ToolchainState.Ready -> "Toolchain ready"
+                            is ToolchainState.Failed -> current.message
+                            else -> ""
+                        }
+                        val accent = when (state) {
+                            is ToolchainState.Ready -> BerryColors.Success
+                            is ToolchainState.Failed -> BerryColors.Danger
+                            else -> BerryColors.Edit
+                        }
+                        Text(label, style = BerryType.Caption, color = accent, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.height(BerrySpacing.sm))
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(BerryRadius.pill))
+                                .background(BerryColors.Surface3),
+                        ) {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth(if (state is ToolchainState.Ready) 1f else animatedFraction)
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(BerryRadius.pill))
+                                    .background(accent),
+                            )
+                        }
+                        Spacer(Modifier.height(BerrySpacing.lg))
+                    }
+
+                    // ---- Install log: every step, and the real error when one occurs ----
+                    if (installLog.isNotEmpty()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            BerryIcon(BerryIcons.Terminal, null, size = BerrySize.iconSm, tint = BerryColors.TextTertiary)
+                            Spacer(Modifier.width(BerrySpacing.sm))
+                            Text("INSTALL LOG", style = BerryType.Overline, color = BerryColors.TextTertiary)
+                        }
+                        Spacer(Modifier.height(BerrySpacing.sm))
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(140.dp)
+                                .clip(RoundedCornerShape(BerryRadius.md))
+                                .background(BerryColors.TermBackground)
+                                .verticalScroll(rememberScrollState())
+                                .padding(BerrySpacing.md),
+                        ) {
+                            Column {
+                                installLog.forEach { line ->
+                                    Text(
+                                        line,
+                                        style = BerryType.CodeMicro,
+                                        color = if (line.startsWith("FAILED")) {
+                                            BerryColors.Danger
+                                        } else {
+                                            BerryColors.TextSecondary
+                                        },
+                                    )
+                                }
                             }
                         }
-                    },
-                    icon = BerryIcons.Download,
-                    fillWidth = true,
-                    size = BerryButtonSize.Lg,
-                    enabled = !running,
-                )
-            }
+                        Spacer(Modifier.height(BerrySpacing.lg))
+                    }
 
-            if (state !is ToolchainState.Ready && !running) {
-                Spacer(Modifier.height(BerrySpacing.sm))
-                BerryButton(
-                    text = "Skip for now",
-                    onClick = onSkip,
-                    variant = BerryButtonVariant.Ghost,
-                    fillWidth = true,
-                )
-                Spacer(Modifier.height(BerrySpacing.sm))
-                Text(
-                    "You can install the toolchain later from Settings. The editor, AI review, " +
-                        "GitHub flows and the MCP server all work without it.",
-                    style = BerryType.Caption,
-                    color = BerryColors.TextTertiary,
-                )
+                    // ---- Actions ----
+                    when {
+                        state is ToolchainState.Ready -> BerryButton(
+                            text = "Continue",
+                            onClick = onDone,
+                            icon = BerryIcons.Check,
+                            fillWidth = true,
+                            size = BerryButtonSize.Lg,
+                        )
+                        state is ToolchainState.Failed -> Row(horizontalArrangement = Arrangement.spacedBy(BerrySpacing.sm)) {
+                            BerryButton(
+                                text = "Retry",
+                                onClick = {
+                                    running = true
+                                    scope.launch { viewModel.toolchain.install { index, _, value ->
+                                        currentIndex = index
+                                        fraction = value
+                                    } }
+                                },
+                                icon = BerryIcons.Refresh,
+                                modifier = Modifier.weight(1f),
+                            )
+                            BerryButton(
+                                text = "Skip",
+                                onClick = onSkip,
+                                variant = BerryButtonVariant.Ghost,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        else -> BerryButton(
+                            text = if (running) "Installing…" else "Install toolchain",
+                            onClick = {
+                                running = true
+                                fraction = 0f
+                                currentIndex = 0
+                                scope.launch {
+                                    viewModel.toolchain.install { index, _, value ->
+                                        currentIndex = index
+                                        fraction = value
+                                    }
+                                }
+                            },
+                            icon = BerryIcons.Download,
+                            fillWidth = true,
+                            size = BerryButtonSize.Lg,
+                            enabled = !running,
+                        )
+                    }
+
+                    if (state !is ToolchainState.Ready && !running) {
+                        Spacer(Modifier.height(BerrySpacing.sm))
+                        BerryButton(
+                            text = "Skip for now",
+                            onClick = onSkip,
+                            variant = BerryButtonVariant.Ghost,
+                            fillWidth = true,
+                        )
+                        Spacer(Modifier.height(BerrySpacing.sm))
+                        Text(
+                            "You can install the toolchain later from Settings. The editor, AI review, " +
+                                "GitHub flows and the MCP server all work without it.",
+                            style = BerryType.Caption,
+                            color = BerryColors.TextTertiary,
+                        )
+                    }
+                }
             }
         }
     }

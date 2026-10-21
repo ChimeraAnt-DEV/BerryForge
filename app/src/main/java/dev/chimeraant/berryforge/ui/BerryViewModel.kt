@@ -135,6 +135,15 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
             container.settings.toolchainReady.collect { _toolchainReady.value = it }
         }
         viewModelScope.launch {
+            // The onboarding/toolchain flags are just persisted intentions; the ground
+            // truth is what actually landed on disk. Re-read it on every launch so a
+            // completed install is never re-offered and an interrupted one is.
+            container.toolchain.refreshState()
+            val ready = container.toolchain.isInstalled()
+            _toolchainReady.value = ready
+            if (ready) container.settings.setToolchainReady(true)
+        }
+        viewModelScope.launch {
             container.sessions.pending.collect { _pendingApprovals.value = it }
         }
         viewModelScope.launch { restoreSession() }
