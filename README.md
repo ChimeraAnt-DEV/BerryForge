@@ -184,3 +184,6 @@ surfaces. They are also the fastest way to validate a change to any one area.
 
 
 **Made by lynx**
+
+
+*(I was on ChimeraTeam account while making and updating this app so please don't mistake the the rest of the team for my work T_T)*
