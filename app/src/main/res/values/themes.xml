@@ -6,6 +6,8 @@
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
-        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <!-- windowLayoutInDisplayCutoutMode is API 27+, so it lives in values-v27/themes.xml
+             rather than here: putting it in the base theme would trip the NewApi lint check
+             on the minSdk-26 build and be ignored on a strict OEM. -->
     </style>
 </resources>

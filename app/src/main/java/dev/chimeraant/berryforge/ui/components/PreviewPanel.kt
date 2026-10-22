@@ -1,5 +1,6 @@
 package dev.chimeraant.berryforge.ui.components
 
+import android.annotation.SuppressLint
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -30,7 +31,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -108,11 +113,22 @@ fun HtmlPreviewButton(
 }
 
 /**
- * Full-screen live preview that slides up over the editor. [htmlSource] is re-injected
- * on every recomposition, so edits are reflected instantly without a reload button.
+ * Full-screen live preview that slides up over the editor.
+ *
+ * The document is re-injected as the user types, but deliberately **debounced and
+ * diffed**: `loadDataWithBaseURL` tears the page down and re-parses it, so calling it on
+ * every keystroke reloaded the whole document once per character. On a large page that
+ * was a visible stutter on every key press, and it also reset any in-page state (scroll
+ * position, form input) the user had established. The reload now happens at most once per
+ * [PREVIEW_DEBOUNCE_MS] and only when the source actually changed.
+ *
  * The WebView is sandboxed: no file or content access, JavaScript allowed only for the
  * page itself and local assets.
  */
+// The preview is a sandbox: JavaScript is on because the page is the user's own HTML,
+// but file, content and cross-origin access are all off (see the settings below), and
+// nothing is loaded over the network. Lint's blanket warning does not apply here.
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun HtmlPreviewSheet(
     visible: Boolean,
@@ -120,6 +136,25 @@ fun HtmlPreviewSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // The last source actually handed to the WebView. A plain holder rather than state:
+    // it is only read inside `update`, so making it state would schedule an extra
+    // recomposition for every reload and buy nothing.
+    val lastLoaded = remember { LoadedMarker() }
+
+    // Debounced source. Only advances once typing pauses, so a burst of keystrokes
+    // produces one reload instead of one per character.
+    var settled by remember { mutableStateOf(htmlSource) }
+    LaunchedEffect(htmlSource) {
+        if (htmlSource == settled) return@LaunchedEffect
+        kotlinx.coroutines.delay(PREVIEW_DEBOUNCE_MS)
+        settled = htmlSource
+    }
+    // Closing the sheet destroys the WebView, so the marker is cleared; reopening then
+    // re-renders even when the source has not changed in between.
+    LaunchedEffect(visible) {
+        if (!visible) lastLoaded.value = null
+    }
+
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn(tween(BerryMotion.Slow)) + slideInVertically(tween(BerryMotion.Slow)) { it },
@@ -173,21 +208,60 @@ fun HtmlPreviewSheet(
                             settings.cacheMode = WebSettings.LOAD_NO_CACHE
                             settings.allowFileAccess = false
                             settings.allowContentAccess = false
+                            // HTML previews run arbitrary user/LLM-authored script. On
+                            // API 26-29 the file-URL access flags default to true, so a
+                            // preview could read sibling assets or make cross-origin
+                            // requests; pin both off. Popups stay off too.
+                            settings.allowFileAccessFromFileURLs = false
+                            settings.allowUniversalAccessFromFileURLs = false
+                            settings.javaScriptCanOpenWindowsAutomatically = false
                             webChromeClient = WebChromeClient()
                         }
                     },
                     modifier = Modifier.fillMaxSize(),
                     update = { webView ->
-                        webView.loadDataWithBaseURL(
-                            "file:///android_asset/",
-                            htmlSource,
-                            "text/html",
-                            "utf-8",
-                            null,
-                        )
+                        // Debounced: see the note on the sheet. `settled` only advances
+                        // once the source has stopped changing for a moment, so a fast
+                        // typist triggers one reload rather than one per character.
+                        if (settled != lastLoaded.value) {
+                            lastLoaded.value = settled
+                            webView.loadDataWithBaseURL(
+                                "file:///android_asset/",
+                                settled,
+                                "text/html",
+                                "utf-8",
+                                null,
+                            )
+                        }
+                    },
+                    onRelease = { webView ->
+                        // A WebView that is merely dropped keeps its renderer process and
+                        // its JS timers alive. Releasing it stops the page and frees the
+                        // memory instead of leaking a renderer per preview opened.
+                        runCatching {
+                            webView.stopLoading()
+                            webView.loadUrl("about:blank")
+                            webView.clearHistory()
+                            webView.removeAllViews()
+                            webView.destroy()
+                        }
                     },
                 )
             }
         }
     }
+}
+
+/**
+ * How long typing must pause before the preview document is re-injected.
+ *
+ * A reload tears down and re-parses the whole page, so this trades a small amount of
+ * latency for a large amount of smoothness: without it the document reloaded on every
+ * single keystroke.
+ */
+private const val PREVIEW_DEBOUNCE_MS = 250L
+
+/** Mutable holder for the source currently loaded into the preview WebView. */
+private class LoadedMarker {
+    var value: String? = null
 }

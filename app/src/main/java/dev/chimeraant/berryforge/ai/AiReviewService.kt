@@ -193,6 +193,74 @@ class AiReviewService(
 
     suspend fun model(): String = settings.llmModel.first()
 
+    /**
+     * Free-form fallback for queries the deterministic [dev.chimeraant.berryforge.ai.mecha.MechaBrain]
+     * could not classify.
+     *
+     * This is the *only* path that reaches a model from the editor assistant. Mecha answers
+     * everything it can locally and instantly; only genuinely unmatched questions land here,
+     * and only when the user has configured a key. The file is included so the model can
+     * ground its answer in what is actually on screen.
+     */
+    suspend fun chat(
+        history: List<Pair<String, String>>,
+        fileContext: String,
+    ): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val apiKey = secure.llmApiKey?.takeIf { it.isNotBlank() }
+                ?: error("No API key configured. Add one in Settings → AI review.")
+            val base = endpoint()
+            val modelName = model()
+
+            val payload = buildJsonObject {
+                put("model", modelName)
+                put("temperature", 0.2)
+                put("stream", false)
+                put("messages", buildJsonArray {
+                    add(buildJsonObject {
+                        put("role", "system")
+                        put("content", CHAT_SYSTEM_PROMPT)
+                    })
+                    add(buildJsonObject {
+                        put("role", "user")
+                        put("content", "Current file:\n```\n${fileContext.take(40000)}\n```")
+                    })
+                    history.takeLast(12).forEach { (role, content) ->
+                        add(buildJsonObject {
+                            put("role", if (role.equals("user", ignoreCase = true)) "user" else "assistant")
+                            put("content", content)
+                        })
+                    }
+                })
+            }.toString()
+
+            val request = Request.Builder()
+                .url("$base/chat/completions")
+                .header("Authorization", "Bearer $apiKey")
+                .header("Content-Type", "application/json")
+                .post(payload.toRequestBody("application/json".toMediaType()))
+                .build()
+
+            Http.client.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    error(
+                        when (response.code) {
+                            401, 403 -> "The endpoint rejected the API key (${response.code})."
+                            429 -> "Rate limited by the provider. Try again shortly."
+                            else -> "Chat request failed (${response.code}): ${body.take(200)}"
+                        },
+                    )
+                }
+                val root = json.parseToJsonElement(body).jsonObject
+                root["choices"]?.jsonArray?.firstOrNull()
+                    ?.jsonObject?.get("message")?.jsonObject?.get("content")?.jsonPrimitive?.content
+                    ?.trim()
+                    ?: error("The provider returned no completion. Check the model name in Settings.")
+            }
+        }
+    }
+
     suspend fun review(
         path: String,
         content: String,
@@ -407,6 +475,12 @@ class AiReviewService(
                 "You find compile errors, runtime crash risks, performance problems, dead code and unused imports. " +
                 "You never comment on formatting preferences unless asked. " +
                 "You always answer with a single JSON object and nothing else."
+
+        private const val CHAT_SYSTEM_PROMPT =
+            "You are Mecha, a code assistant embedded in an Android IDE. " +
+                "Answer only about the file you are given, concisely and concretely. " +
+                "If the answer is not in the file, say so plainly instead of guessing. " +
+                "Prefer short paragraphs or tight bullet lists over long essays."
 
         fun languageOf(path: String): String = when (path.substringAfterLast('.', "").lowercase()) {
             "kt", "kts" -> "Kotlin"

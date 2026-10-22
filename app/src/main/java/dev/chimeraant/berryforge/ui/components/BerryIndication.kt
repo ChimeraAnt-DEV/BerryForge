@@ -15,6 +15,7 @@ import androidx.compose.ui.node.DrawModifierNode
 import dev.chimeraant.berryforge.ui.design.BerryColors
 import kotlinx.coroutines.launch
 import dev.chimeraant.berryforge.ui.design.BerryMotion
+import dev.chimeraant.berryforge.core.launchSafely
 
 /**
  * Press indication for BerryForge controls.
@@ -56,7 +57,7 @@ private class BerryIndicationNode(
     private val progress = Animatable(0f)
 
     override fun onAttach() {
-        coroutineScope.launch {
+        coroutineScope.launchSafely {
             interactionSource.interactions.collect { interaction ->
                 when (interaction) {
                     is PressInteraction.Press -> progress.animateTo(

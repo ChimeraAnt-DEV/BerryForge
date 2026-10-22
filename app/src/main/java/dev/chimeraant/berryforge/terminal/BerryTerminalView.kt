@@ -39,6 +39,12 @@ fun BerryTerminalView(
     modifier: Modifier = Modifier,
     onTitle: (String) -> Unit = {},
     onExit: (Int) -> Unit = {},
+    /**
+     * Publishes the live session to the caller (and null when it ends), so the surrounding
+     * screen can drive it — the terminal's own control strip needs to write a real Ctrl+C
+     * rather than tell the user to use a soft key that does not exist.
+     */
+    onSessionChanged: (TerminalSession?) -> Unit = {},
 ) {
     val context = LocalContext.current
     val currentOnTitle by rememberUpdatedState(onTitle)
@@ -140,6 +146,7 @@ fun BerryTerminalView(
             session = newSession
             terminalView.attachSession(newSession)
             terminalView.post { terminalView.updateSize() }
+            onSessionChanged(newSession)
         }
     }
 
@@ -150,6 +157,7 @@ fun BerryTerminalView(
     DisposableEffect(Unit) {
         onDispose {
             runCatching { session?.finishIfRunning() }
+            onSessionChanged(null)
         }
     }
 

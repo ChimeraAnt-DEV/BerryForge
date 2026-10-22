@@ -57,6 +57,7 @@ import dev.chimeraant.berryforge.ui.design.BerryRadius
 import dev.chimeraant.berryforge.ui.design.BerrySize
 import dev.chimeraant.berryforge.ui.design.BerrySpacing
 import dev.chimeraant.berryforge.ui.design.BerryType
+import dev.chimeraant.berryforge.core.launchSafely
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -72,9 +73,9 @@ fun BuildScreen(
     viewModel: BerryViewModel,
     onOpenFileAtLine: (path: String, line: Int) -> Unit,
     onProfileClick: () -> Unit,
+    modifier: Modifier = Modifier,
     onManageAccounts: () -> Unit = {},
     onOpenApkTester: () -> Unit = {},
-    modifier: Modifier = Modifier,
 ) {
     val state by viewModel.gradle.state.collectAsStateWithLifecycle()
     val lines by viewModel.gradle.logLines.collectAsStateWithLifecycle()
@@ -141,7 +142,7 @@ fun BuildScreen(
                 text = if (running) "Building…" else "assembleDebug",
                 onClick = {
                     val target = repo ?: return@BerryButton
-                    scope.launch {
+                    scope.launchSafely(onError = { viewModel.toast("Build could not start: ${it.message ?: "unknown error"}") }) {
                         val projectDir = viewModel.workspace.repoDir(target.ownerLogin, target.name)
                         val result = viewModel.gradle.run(projectDir, BuildTask.AssembleDebug)
                         if (result is BuildState.Succeeded && result.apk != null) {
@@ -157,7 +158,7 @@ fun BuildScreen(
                 text = "Test",
                 onClick = {
                     val target = repo ?: return@BerryButton
-                    scope.launch {
+                    scope.launchSafely(onError = { viewModel.toast("Tests could not start: ${it.message ?: "unknown error"}") }) {
                         viewModel.gradle.run(
                             viewModel.workspace.repoDir(target.ownerLogin, target.name),
                             BuildTask.Test,
@@ -172,7 +173,7 @@ fun BuildScreen(
                 text = "Clean",
                 onClick = {
                     val target = repo ?: return@BerryButton
-                    scope.launch {
+                    scope.launchSafely(onError = { viewModel.toast("Clean could not start: ${it.message ?: "unknown error"}") }) {
                         viewModel.gradle.run(
                             viewModel.workspace.repoDir(target.ownerLogin, target.name),
                             BuildTask.Clean,

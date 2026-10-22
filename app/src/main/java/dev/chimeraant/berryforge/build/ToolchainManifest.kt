@@ -30,6 +30,16 @@ internal object ToolchainManifest {
     /** Base URL for every package below. */
     const val TERMUX_REPO = "https://packages.termux.dev/apt/termux-main/"
 
+    /**
+     * The canonical package index for aarch64.
+     *
+     * The pinned URLs above are generated from this index. Reading it at install time is
+     * the fallback when a pinned version has been rotated away: it lists the current
+     * `Filename`, `Size` and `SHA256` for every package, so the download can be repaired
+     * against the same upstream data the pins came from.
+     */
+    const val INDEX_URL = "https://packages.termux.dev/apt/termux-main/dists/stable/main/binary-aarch64/Packages"
+
     /** Package layout used by Termux debs; stripped during extraction. */
     const val TERMUX_DATA_PREFIX = "data/data/com.termux/files/usr/"
 
@@ -85,10 +95,10 @@ internal object ToolchainManifest {
     val ADB_PACKAGES: List<TermuxPackage> = listOf(
         TermuxPackage("abseil-cpp", "pool/main/a/abseil-cpp/abseil-cpp_20260817.0_aarch64.deb", 1214712L,
             "b698963bb7096494ad928ce89cd869a53e6adf0b05f5f407b40fda9c85c6e2b0"),
-        TermuxPackage("android-tools", "pool/main/a/android-tools/android-tools_37.0.0p1-2_aarch64.deb", 2374416L,
-            "f1a706643db9f4df05333f937ec87065f0f38d7799168a635d2bf40296a229bb"),
-        TermuxPackage("brotli", "pool/main/b/brotli/brotli_1.2.0_aarch64.deb", 340592L,
-            "db1502601d40fb44e6085ad8bfd9311a8b472e98db831ceec9d404c5708bb52c"),
+        TermuxPackage("android-tools", "pool/main/a/android-tools/android-tools_37.0.0p1-3_aarch64.deb", 2374720L,
+            "534e90d338bd432c06677cb402d0e9ed98a82a74de4bf5f90e643f15d8fc4274"),
+        TermuxPackage("brotli", "pool/main/b/brotli/brotli_1.2.1_aarch64.deb", 344000L,
+            "4fba29438b2b44f8470d52173b4548e938542dc2fc632f8699be5a284cbb9485"),
         TermuxPackage("fmt", "pool/main/f/fmt/fmt_1:12.2.0_aarch64.deb", 183656L,
             "4a2cb43ab167b32daf0d7978f21c5391d17bce47dae6aa2a8b3a8f958e663ce7"),
         TermuxPackage("libc++", "pool/main/libc/libc++/libc++_30_aarch64.deb", 341604L,

@@ -9,7 +9,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.remember
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -24,6 +26,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val container = (application as BerryForgeApp).container
         enterImmersiveFullscreen()
+        installImeFullscreenGuard()
 
         setContent {
             BerryTheme {
@@ -41,25 +44,41 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Hides the status and navigation bars on launch.
+     * Hides the status and navigation bars so the whole display belongs to the editor.
      *
      * BerryForge is an IDE first: the code surface is the product, and every pixel of a
      * tablet screen should belong to it. The bars are not destroyed — a swipe from any
      * edge reveals them transiently (BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE) so the user
-     * can always reach the system UI, and they are re-hidden on the next focus.
+     * can always reach the system UI.
+     *
+     * ## Why this is called from several lifecycle points
+     *
+     * Android re-shows the system bars whenever it takes focus back: the IME appears, a
+     * permission or system dialog opens, the app is backgrounded, the display rotates, or
+     * a screen-off/on cycle happens. Hiding them once in `onCreate` therefore left the app
+     * broken out of fullscreen for the rest of the session — the reported symptom was
+     * "fullscreen until the keyboard opens, then never again". It is re-applied from
+     * [onWindowFocusChanged] and [onResume], and the call is idempotent, so repeated
+     * invocation costs nothing.
+     *
+     * ## API guards
+     *
+     * - `isNavigationBarContrastEnforced` / `isStatusBarContrastEnforced` are API 29. The
+     *   scrims they control fight an immersive layout: the bars are hidden, but a
+     *   translucent grey strip peeks out during a transient edge-swipe. Guarding on API 26
+     *   (as an earlier version did) called methods that do not exist on Android 8/9 and
+     *   crashed on launch with `NoSuchMethodError` before `setContent` ever ran.
+     * - `WindowInsetsController` is API 30. Below that the deprecated
+     *   `systemUiVisibility` flags are used instead.
      */
     private fun enterImmersiveFullscreen() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        // Any contrast scrim Android enforces on the bars fights the anonymous bars:
-        // the bars are hidden anyway, and a translucent grey strip peeks out while a
-        // transient edge-swipe reveals them. Both contrast flags require API 29 (Q);
-        // the previous guard on O (API 26) let the navigation-bar setter run on
-        // Android 8/9, where the method does not exist, and crashed on launch with
-        // NoSuchMethodError before setContent ever ran.
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.isNavigationBarContrastEnforced = false
             window.isStatusBarContrastEnforced = false
         }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.insetsController?.let { controller ->
                 controller.hide(
@@ -82,11 +101,39 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Android re-shows the system bars whenever it steals focus (IME, permission
-     * dialog, another activity), so immersive mode must be re-applied each time focus
-     * returns or the app stays broken out of fullscreen for the rest of the session.
-     * Re-entering is idempotent: after the transient swipe reveal the bars fade back
-     * automatically, and any later focus change re-hides them for good.
+     * Re-hides the bars whenever the system re-shows them.
+     *
+     * `onWindowFocusChanged` catches dialogs and app switches, but **not** the keyboard:
+     * the soft input appearing does not move window focus, yet Android re-shows the
+     * navigation bar to sit the IME above it. Relying on focus alone is exactly how the
+     * app ended up "fullscreen until the first keyboard". An insets listener fires on that
+     * change, so the bars are hidden again as soon as the IME settles.
+     *
+     * The listener is cheap and only reacts to IME visibility transitions, so it does not
+     * add per-frame work to typing.
+     */
+    private fun installImeFullscreenGuard() {
+        val decor = window.decorView
+        var imeVisible = false
+        ViewCompat.setOnApplyWindowInsetsListener(decor) { view, insets ->
+            val nowVisible = insets.isVisible(WindowInsetsCompat.Type.ime())
+            if (nowVisible != imeVisible) {
+                imeVisible = nowVisible
+                // Re-hide after the IME transition completes; posting avoids fighting the
+                // platform's own layout pass for that frame.
+                view.post { enterImmersiveFullscreen() }
+            }
+            insets
+        }
+        ViewCompat.requestApplyInsets(decor)
+    }
+
+    /**
+     * Re-hides the bars whenever Android has re-shown them.
+     *
+     * A focus change is the signal for exactly the events that restore the system UI — the
+     * IME opening, a transient swipe, a dialog — so re-applying here is what keeps the app
+     * genuinely fullscreen rather than fullscreen until the first keyboard.
      */
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)

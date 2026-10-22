@@ -45,6 +45,7 @@ import dev.chimeraant.berryforge.ui.design.BerrySpacing
 import dev.chimeraant.berryforge.ui.design.BerryType
 import dev.chimeraant.berryforge.data.diff.DiffEngine
 import kotlinx.coroutines.launch
+import dev.chimeraant.berryforge.core.launchSafely
 
 /**
  * Stage → commit → push → open PR, all from one sheet.
@@ -171,16 +172,23 @@ fun CommitSheet(
                         text = if (generating) "…" else "AI",
                         onClick = {
                             generating = true
-                            scope.launch {
-                                viewModel.aiReview.suggestCommitMessage(repoFullName, stagedPaths, diff)
-                                    .onSuccess { suggestion ->
-                                        if (suggestion.isNotBlank()) {
-                                            message = suggestion
-                                            if (prTitle.isBlank()) prTitle = suggestion
+                            scope.launchSafely {
+                                try {
+                                    viewModel.aiReview.suggestCommitMessage(repoFullName, stagedPaths, diff)
+                                        .onSuccess { suggestion ->
+                                            if (suggestion.isNotBlank()) {
+                                                message = suggestion
+                                                if (prTitle.isBlank()) prTitle = suggestion
+                                            }
                                         }
-                                    }
-                                    .onFailure { viewModel.toast(it.message ?: "Could not generate a message.") }
-                                generating = false
+                                        .onFailure { viewModel.toast(it.message ?: "Could not generate a message.") }
+                                } finally {
+                                    // In a finally block, not after the call: a synchronous
+                                    // throw would otherwise leave the button reading "…"
+                                    // forever, and the only way out would be to reopen the
+                                    // sheet.
+                                    generating = false
+                                }
                             }
                         },
                         variant = BerryButtonVariant.Ai,
@@ -240,7 +248,7 @@ fun CommitSheet(
                             return@BerryButton
                         }
                         working = true
-                        scope.launch {
+                        scope.launchSafely {
                             val outcome = runCatching {
                                 viewModel.commitFlow.commit(
                                     owner = owner,
@@ -269,7 +277,7 @@ fun CommitSheet(
                                     else -> error.message ?: "The commit could not be pushed."
                                 }
                                 viewModel.toast(readable)
-                                return@launch
+                                return@launchSafely
                             }
                             val done = outcome.getOrThrow()
                             if (done.pushed || done.files.isNotEmpty()) {
@@ -301,8 +309,14 @@ fun CommitSheet(
 /** Renders a unified diff with add/remove colouring. */
 @Composable
 private fun DiffText(diff: String) {
+    // A vertical scroll renders every child, so an unbounded diff (a regenerated lock file
+    // or a vendored dependency can be tens of thousands of lines) meant tens of thousands of
+    // Box+Text composables in one frame — a guaranteed stutter, and an OOM risk on a low-end
+    // device. The preview is capped; the full change is still what gets committed.
+    val allLines = remember(diff) { diff.lines() }
+    val shown = remember(allLines) { allLines.take(MAX_DIFF_PREVIEW_LINES) }
     Column {
-        diff.lines().forEach { line ->
+        shown.forEach { line ->
             val color = when {
                 line.startsWith("+++") || line.startsWith("---") -> BerryColors.TextTertiary
                 line.startsWith("@@") -> BerryColors.Ai
@@ -324,5 +338,16 @@ private fun DiffText(diff: String) {
                 Text(line.ifBlank { " " }, style = BerryType.CodeMicro, color = color, maxLines = 1)
             }
         }
+        if (allLines.size > shown.size) {
+            Text(
+                "… ${allLines.size - shown.size} more lines",
+                style = BerryType.CodeMicro,
+                color = BerryColors.TextDisabled,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
     }
 }
+
+/** Cap for the on-screen diff preview. The full diff is still committed. */
+private const val MAX_DIFF_PREVIEW_LINES = 400

@@ -50,6 +50,7 @@ import dev.chimeraant.berryforge.ui.components.BerryIcon
 import dev.chimeraant.berryforge.ui.components.BerryIconButton
 import dev.chimeraant.berryforge.ui.components.BerrySearchField
 import dev.chimeraant.berryforge.ui.components.BerryShimmer
+import dev.chimeraant.berryforge.ui.components.rememberShimmerProgress
 import dev.chimeraant.berryforge.ui.components.BerryTopBar
 import dev.chimeraant.berryforge.ui.design.BerryColors
 import dev.chimeraant.berryforge.ui.design.BerryIcons
@@ -65,8 +66,8 @@ fun ReposScreen(
     viewModel: BerryViewModel,
     onOpenRepo: (GhRepo) -> Unit,
     onProfileClick: () -> Unit,
-    onManageAccounts: () -> Unit = {},
     modifier: Modifier = Modifier,
+    onManageAccounts: () -> Unit = {},
 ) {
     val repos by viewModel.repos.collectAsStateWithLifecycle()
     val loading by viewModel.reposLoading.collectAsStateWithLifecycle()
@@ -221,9 +222,10 @@ private fun RepoRow(repo: GhRepo, onClick: () -> Unit) {
                     BerryChip("archived", color = BerryColors.Warning)
                 }
             }
-            if (!repo.description.isNullOrBlank()) {
+            val description = repo.description
+            if (!description.isNullOrBlank()) {
                 Text(
-                    repo.description!!,
+                    description,
                     style = BerryType.Caption,
                     color = BerryColors.TextTertiary,
                     maxLines = 1,
@@ -231,8 +233,9 @@ private fun RepoRow(repo: GhRepo, onClick: () -> Unit) {
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(BerrySpacing.md)) {
-                if (repo.language != null) {
-                    MetaItem(BerryIcons.Code, repo.language!!)
+                val language = repo.language
+                if (language != null) {
+                    MetaItem(BerryIcons.Code, language)
                 }
                 if (repo.stars > 0) MetaItem(BerryIcons.Star, repo.stars.toString())
                 MetaItem(BerryIcons.Branch, repo.defaultBranch)
@@ -257,10 +260,14 @@ private fun RepoListSkeleton() {
         Modifier.fillMaxSize().padding(horizontal = BerrySpacing.lg),
         verticalArrangement = Arrangement.spacedBy(BerrySpacing.sm),
     ) {
+        // One transition shared by all six rows: six independent shimmers meant six
+        // animations invalidating their own gradient every frame.
+        val shimmer = rememberShimmerProgress()
         repeat(6) {
             BerryShimmer(
                 Modifier.fillMaxWidth().height(76.dp),
                 radius = BerryRadius.lg,
+                progress = shimmer,
             )
         }
     }

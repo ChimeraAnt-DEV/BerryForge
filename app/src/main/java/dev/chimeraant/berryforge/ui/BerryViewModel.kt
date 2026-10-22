@@ -12,16 +12,18 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dev.chimeraant.berryforge.core.AppContainer
+import dev.chimeraant.berryforge.core.launchSafely
 import dev.chimeraant.berryforge.data.github.GhRepo
 import dev.chimeraant.berryforge.data.github.GhTree
 import dev.chimeraant.berryforge.data.github.GhTreeEntry
 import dev.chimeraant.berryforge.data.github.GhUser
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Which top-level destination is showing. */
 enum class Destination(val label: String) {
@@ -140,7 +142,7 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
     val workspace get() = container.workspace
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launchSafely {
             // A corrupt or half-written DataStore file makes the flow throw instead of
             // emitting. Catching it keeps the app launchable (flags default to false)
             // rather than closing right after the splash background paints.
@@ -151,7 +153,7 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
                 }
             }.onFailure { markSettingsBootstrappedIfReady() }
         }
-        viewModelScope.launch {
+        viewModelScope.launchSafely {
             runCatching {
                 container.settings.toolchainReady.collect {
                     _toolchainReady.value = it
@@ -159,24 +161,38 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
                 }
             }.onFailure { markSettingsBootstrappedIfReady() }
         }
-        viewModelScope.launch {
+        viewModelScope.launchSafely {
             runCatching {
-                // The onboarding/toolchain flags are just persisted intentions; the ground
-                // truth is what actually landed on disk. Re-read it on every launch so a
-                // completed install is never re-offered and an interrupted one is.
-                container.toolchain.refreshState()
-                val ready = container.toolchain.isInstalled()
+                // Off the main thread: refreshState reads the filesystem, and the exec
+                // verdict can spawn `java -version` and wait on it. It happens to be cached
+                // by the refresh above, but relying on that ordering for main-thread safety
+                // is one reorder away from an ANR, so the whole check is moved to IO.
+                val ready = withContext(Dispatchers.IO) {
+                    // The onboarding/toolchain flags are just persisted intentions; the
+                    // ground truth is what actually landed on disk. Re-read it on every
+                    // launch so a completed install is never re-offered and an interrupted
+                    // one is.
+                    container.toolchain.refreshState()
+                    // isInstalled() only proves the files exist. On Android 10+ the platform
+                    // refuses to execute anything unpacked into app storage, so a present
+                    // JDK can still be unusable; asking for the exec verdict keeps the build
+                    // button honest instead of enabling it on a toolchain that cannot run.
+                    container.toolchain.isInstalled() &&
+                        container.toolchain.execBlockedReason() == null
+                }
                 _toolchainReady.value = ready
                 markSettingsBootstrappedIfReady()
                 if (ready) container.settings.setToolchainReady(true)
             }.onFailure { markSettingsBootstrappedIfReady() }
         }
-        viewModelScope.launch {
+        viewModelScope.launchSafely {
             runCatching {
                 container.sessions.pending.collect { _pendingApprovals.value = it }
             }
         }
-        viewModelScope.launch { restoreSession() }
+        // restoreSession is internally best-effort, but a throw from anywhere inside it
+        // would cancel viewModelScope and leave the UI frozen on the sign-in spinner.
+        viewModelScope.launchSafely { restoreSession() }
     }
 
     private suspend fun restoreSession() {
@@ -200,11 +216,13 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
     // ---- Sign in ----
 
     fun startSignIn() {
-        viewModelScope.launch {
+        // Sign-in talks to GitHub and the Keystore; a throw here would surface as a crash
+        // from the sign-in button rather than an error on the sign-in screen.
+        viewModelScope.launchSafely {
             _signIn.value = SignInState.Idle
             val device = container.auth.requestDeviceCode().getOrElse { error ->
                 _signIn.value = SignInState.Failed(error.message ?: "Could not reach GitHub.")
-                return@launch
+                return@launchSafely
             }
             _signIn.value = SignInState.AwaitingApproval(
                 userCode = device.userCode,
@@ -218,11 +236,11 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
                 }
             }.getOrElse { error ->
                 _signIn.value = SignInState.Failed(error.message ?: "Sign-in failed.")
-                return@launch
+                return@launchSafely
             }
             val signedIn = container.auth.completeSignIn(token).getOrElse { error ->
                 _signIn.value = SignInState.Failed(error.message ?: "Could not read the account.")
-                return@launch
+                return@launchSafely
             }
             _user.value = signedIn
             _signedIn.value = true
@@ -239,7 +257,7 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
 
     fun signOut() {
         val login = container.secure.activeLogin
-        viewModelScope.launch {
+        viewModelScope.launchSafely {
             // Revoke every stored token, not just the active one, and clear the mirrors.
             // Previously only the active account was revoked and the workspaces were left
             // on disk, so a signed-out device still held repository content.
@@ -284,7 +302,7 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
      * hence capturing the active login before the removal rather than comparing after.
      */
     fun signOutAccount(login: String) {
-        viewModelScope.launch {
+        viewModelScope.launchSafely {
             val wasActive = container.secure.activeLogin == login
 
             val token = container.secure.tokenFor(login)
@@ -322,7 +340,7 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
 
     fun switchAccount(login: String) {
         container.auth.switchTo(login)
-        viewModelScope.launch {
+        viewModelScope.launchSafely {
             _user.value = container.repoCache.getProfile(login)
             refreshOwnerStatus()
             loadRepos(force = false)
@@ -349,7 +367,7 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
      * authorisation.
      */
     fun refreshOwnerStatus(force: Boolean = false) {
-        viewModelScope.launch {
+        viewModelScope.launchSafely {
             runCatching {
                 val login = container.secure.activeLogin
                 val cachedAt = container.settings.ownerCacheAt.first()
@@ -359,13 +377,13 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
 
                 if (!force && fresh && hasCache) {
                     applyOwnerStatus(login, parseOrgs(cached))
-                    return@launch
+                    return@launchSafely
                 }
 
                 val token = container.secure.activeToken ?: run {
                     // Not signed in: the login check can still apply if we know the login.
                     applyOwnerStatus(login, emptyList())
-                    return@launch
+                    return@launchSafely
                 }
 
                 // Apply the login-based result immediately so the badge does not wait on the
@@ -403,8 +421,8 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
     // ---- Repos ----
 
     fun loadRepos(force: Boolean = false) {
-        viewModelScope.launch {
-            if (_reposLoading.value) return@launch
+        viewModelScope.launchSafely {
+            if (_reposLoading.value) return@launchSafely
             _reposError.value = null
             // Scoped by the signed-in account so switching accounts does not show the
             // previous account's repositories.
@@ -413,7 +431,7 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
                 val cached = container.repoCache.getRepos(key, allowStale = false)
                 if (cached != null) {
                     _repos.value = cached
-                    return@launch
+                    return@launchSafely
                 }
             }
             _reposLoading.value = true
@@ -437,7 +455,7 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
 
     fun openRepo(repo: GhRepo) {
         _openRepo.value = repo
-        viewModelScope.launch { container.settings.setLastRepo(repo.fullName) }
+        viewModelScope.launchSafely { container.settings.setLastRepo(repo.fullName) }
         loadTree(repo, repo.defaultBranch)
     }
 
@@ -447,13 +465,13 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun loadTree(repo: GhRepo, branch: String) {
-        viewModelScope.launch {
+        viewModelScope.launchSafely {
             _treeLoading.value = true
             val cached = container.repoCache.getTree(repo.fullName, branch, allowStale = false)
             if (cached != null) {
                 _tree.value = cached
                 _treeLoading.value = false
-                return@launch
+                return@launchSafely
             }
             val stale = container.repoCache.getTree(repo.fullName, branch, allowStale = true)
             if (stale != null) _tree.value = stale
@@ -585,7 +603,7 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
      */
     fun startMcp() {
         if (_mcpStatus.value is McpStatus.Starting || _mcpStatus.value is McpStatus.Running) return
-        viewModelScope.launch {
+        viewModelScope.launchSafely {
             _mcpStatus.value = McpStatus.Starting
             val port = container.settings.mcpPort.first()
             val mode = container.settings.tunnelMode.first()
@@ -616,7 +634,11 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
                         _lanEndpoint.value = null
                         container.tunnels.start(actualPort)
                     }
-                    dev.chimeraant.berryforge.mcp.McpTunnelService.start(container.appContext)
+                    // Isolated: a refused foreground start must not surface as an MCP
+                    // failure. The server is already bound and reachable at this point.
+                    runCatching {
+                        dev.chimeraant.berryforge.mcp.McpTunnelService.start(container.appContext)
+                    }
                 }
                 .onFailure { error ->
                     val message = when {
@@ -652,7 +674,7 @@ class BerryViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun markOnboardingDone() {
-        viewModelScope.launch { container.settings.setOnboardingDone(true) }
+        viewModelScope.launchSafely { container.settings.setOnboardingDone(true) }
     }
 
     /**

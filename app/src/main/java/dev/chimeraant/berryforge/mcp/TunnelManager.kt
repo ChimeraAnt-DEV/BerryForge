@@ -7,7 +7,9 @@ import dev.chimeraant.berryforge.data.settings.SecureStore
 import dev.chimeraant.berryforge.data.settings.SettingsStore
 import dev.chimeraant.berryforge.data.settings.TunnelMode
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -306,11 +308,19 @@ class TunnelManager(
         }
     }
 
-    /** Reads lines until [matcher] returns a value or the timeout elapses. */
-    private fun readUntil(proc: Process, timeoutMs: Long, matcher: (String) -> String?): String? {
+    /**
+     * Reads lines until [matcher] returns a value or the timeout elapses.
+     *
+     * Suspending rather than blocking: the caller already runs on [Dispatchers.IO] inside a
+     * coroutine, so `Thread.sleep` held a pool thread idle for up to a minute and made the
+     * wait uncancellable. `delay` yields the thread and lets cancellation through, so
+     * leaving the screen tears the tunnel down promptly instead of after the timeout.
+     */
+    private suspend fun readUntil(proc: Process, timeoutMs: Long, matcher: (String) -> String?): String? {
         val deadline = System.currentTimeMillis() + timeoutMs
         val reader = proc.inputStream.bufferedReader()
         while (System.currentTimeMillis() < deadline) {
+            currentCoroutineContext().ensureActive()
             val line = try {
                 if (reader.ready()) reader.readLine() else null
             } catch (error: Exception) {
@@ -321,7 +331,7 @@ class TunnelManager(
                 matcher(line)?.let { return it }
             } else {
                 if (!proc.isAlive) return null
-                Thread.sleep(120)
+                delay(120)
             }
         }
         return null

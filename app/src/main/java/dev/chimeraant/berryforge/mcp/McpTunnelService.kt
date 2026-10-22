@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import dev.chimeraant.berryforge.BerryForgeApp
 import dev.chimeraant.berryforge.MainActivity
@@ -21,6 +22,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import dev.chimeraant.berryforge.core.launchSafely
 
 /**
  * Keeps the MCP server and its tunnel alive while a remote agent is connected.
@@ -42,20 +44,36 @@ class McpTunnelService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> {
-                // Actually shut the endpoint down. The previous version only called
-                // stopSelf(), which removed the notification but left the HTTP server
-                // and the tunnel running — the endpoint stayed publicly reachable with
-                // no visible indication.
-                val container = (application as BerryForgeApp).container
-                runCatching { container.tunnels.stop() }
-                runCatching { container.mcpHttpServer.stop() }
-                stopSelf()
-                return START_NOT_STICKY
+        // Every path here can throw, and an uncaught exception in a started service takes
+        // the whole process down. The realistic cases are Android 12+ refusing a
+        // foreground start from the background (ForegroundServiceStartNotAllowedException)
+        // and the notification permission being denied on 13+.
+        val started = runCatching {
+            when (intent?.action) {
+                ACTION_STOP -> {
+                    // Actually shut the endpoint down. The previous version only called
+                    // stopSelf(), which removed the notification but left the HTTP server
+                    // and the tunnel running — the endpoint stayed publicly reachable with
+                    // no visible indication.
+                    val container = (application as BerryForgeApp).container
+                    runCatching { container.tunnels.stop() }
+                    runCatching { container.mcpHttpServer.stop() }
+                    stopSelf()
+                    false
+                }
+                else -> {
+                    startForegroundCompat()
+                    true
+                }
             }
-            else -> startForegroundCompat()
+        }.getOrElse { error ->
+            Log.w(TAG, "Could not start the MCP foreground service", error)
+            // A foreground service that never reaches startForeground() must be torn down
+            // promptly or Android kills the process for the ANR.
+            runCatching { stopSelf() }
+            false
         }
+        if (!started) return START_NOT_STICKY
         observeTunnel()
         return START_STICKY
     }
@@ -72,7 +90,10 @@ class McpTunnelService : Service() {
     private fun observeTunnel() {
         if (observeJob?.isActive == true) return
         val container = (application as BerryForgeApp).container
-        observeJob = scope.launch {
+        // launchSafely: a tunnel state flow that throws (a relay closing mid-stream, a
+        // malformed event) would otherwise reach the scope's default handler, which
+        // rethrows on the main thread and kills the process while the endpoint is live.
+        observeJob = scope.launchSafely {
             container.tunnels.state.collectLatest { state ->
                 val publicUrl = (state as? TunnelState.Up)?.publicUrl
                 val localUrl = (state as? TunnelState.Up)?.localUrl
@@ -126,17 +147,16 @@ class McpTunnelService : Service() {
 
     private fun createChannel() {
         val manager = getSystemService(NotificationManager::class.java) ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                getString(R.string.mcp_channel_name),
-                NotificationManager.IMPORTANCE_LOW,
-            ).apply {
-                description = getString(R.string.mcp_channel_desc)
-                setShowBadge(false)
-            }
-            manager.createNotificationChannel(channel)
+        // minSdk is 26, so the channel API is always available.
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            getString(R.string.mcp_channel_name),
+            NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+            description = getString(R.string.mcp_channel_desc)
+            setShowBadge(false)
         }
+        manager.createNotificationChannel(channel)
     }
 
     /**
@@ -166,23 +186,35 @@ class McpTunnelService : Service() {
     }
 
     companion object {
+        private const val TAG = "McpTunnelService"
+
         const val CHANNEL_ID = "berryforge_mcp"
         const val NOTIFICATION_ID = 4210
         const val ACTION_STOP = "dev.chimeraant.berryforge.STOP_MCP"
 
         fun start(context: Context) {
             val intent = Intent(context, McpTunnelService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // startForegroundService throws on Android 12+ when the app is in the
+            // background (ForegroundServiceStartNotAllowedException). The MCP server
+            // itself is already running by the time this is called, so losing only the
+            // notification is acceptable; letting the exception escape the caller's
+            // coroutine would cancel the whole ViewModel scope instead.
+            runCatching {
+                // minSdk is 26, so startForegroundService is always the right call.
                 context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            }.onFailure { Log.w(TAG, "Foreground service start was refused", it) }
         }
 
         fun stop(context: Context) {
-            context.startService(
-                Intent(context, McpTunnelService::class.java).setAction(ACTION_STOP),
-            )
+            // startService from the background throws IllegalStateException on Android 8+,
+            // so a stop request while the app is not in the foreground would crash. The
+            // ViewModel already stops the HTTP server and tunnel directly, so this only
+            // needs to succeed in tearing the notification down.
+            runCatching {
+                context.startService(
+                    Intent(context, McpTunnelService::class.java).setAction(ACTION_STOP),
+                )
+            }.onFailure { Log.w(TAG, "Could not deliver the stop request", it) }
         }
     }
 }

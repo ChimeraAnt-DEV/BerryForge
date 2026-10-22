@@ -7,6 +7,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -18,6 +19,22 @@ import io.github.rosemoe.sora.lang.diagnostic.DiagnosticDetail
 import io.github.rosemoe.sora.lang.diagnostic.DiagnosticRegion
 import io.github.rosemoe.sora.lang.diagnostic.DiagnosticsContainer
 import io.github.rosemoe.sora.widget.CodeEditor
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
+/**
+ * Minimum gap between content-change emissions to the host.
+ *
+ * The editor's own buffer is always authoritative and immediate; this only paces how
+ * often the surrounding Compose tree is told about it.
+ */
+private const val CONTENT_EMIT_INTERVAL_MS = 90L
+
+/** Mutable throttle bookkeeping for content-change emissions. */
+private class EmitThrottle {
+    var lastEmit: Long = 0L
+    var flushScheduled: Boolean = false
+}
 
 /** One inline diagnostic: a rounded wavy underline plus a tooltip with the brief message. */
 data class EditorDiagnostic(
@@ -28,6 +45,30 @@ data class EditorDiagnostic(
     /** Error findings get a stronger red squiggle; everything else uses the warning style. */
     val isError: Boolean = false,
 )
+
+/**
+ * A handle on the editor's live buffer.
+ *
+ * The Compose `text` state is updated on a throttle, so that a large file is not
+ * re-stringified and re-laid-out on every single keystroke. That makes `text` briefly
+ * stale by design — which is fine for the dirty dot, the preview and the assistant, but
+ * not for a save or a commit: writing the throttled value would silently drop the last
+ * few characters typed.
+ *
+ * [BerryCodeEditor] publishes a direct reader here, and the save/commit paths use it to
+ * take the authoritative buffer. The throttled state stays a convenience; this stays the
+ * source of truth.
+ */
+class EditorTextBridge {
+    private var reader: (() -> String)? = null
+
+    internal fun attach(read: () -> String) { reader = read }
+
+    internal fun detach() { reader = null }
+
+    /** The editor's current text, or null when no editor is attached. */
+    fun current(): String? = reader?.invoke()
+}
 
 /** Snapshot of everything the editor needs to render one file. */
 data class EditorConfig(
@@ -64,10 +105,17 @@ fun BerryCodeEditor(
     initialLine: Int? = null,
     onContentChange: (String) -> Unit = {},
     onSelectionChange: (line: Int, column: Int) -> Unit = { _, _ -> },
+    /** Optional live-buffer handle, so a save never writes a throttled value. */
+    textBridge: EditorTextBridge? = null,
 ) {
     val context = LocalContext.current
     val currentOnChange by rememberUpdatedState(onContentChange)
     val currentOnSelection by rememberUpdatedState(onSelectionChange)
+    val scope = rememberCoroutineScope()
+    // A plain holder, not Compose state: these are read and written only inside the
+    // editor's own event callback, so making them state would schedule a recomposition of
+    // the whole editor on every keystroke — the exact cost being removed here.
+    val throttle = remember { EmitThrottle() }
 
     val editor = remember {
         CodeEditor(context).apply {
@@ -136,7 +184,11 @@ fun BerryCodeEditor(
     // Diagnostic squiggles + tooltips come from review findings. They're mapped to
     // character offsets each time findings or text changes, then handed to Sora's
     // container, which draws the indicators without ever blocking a frame.
-    LaunchedEffect(config.path, config.text, config.diagnostics) {
+    // Keyed on the diagnostics themselves rather than on the text: findings describe a
+    // specific reviewed snapshot, and rebuilding the whole container (which invalidates
+    // the editor's layout) on every character typed was pure cost. An edit that shifts
+    // line numbers is re-anchored on the next review, which is when the findings change.
+    LaunchedEffect(config.path, config.diagnostics) {
         runCatching {
             val container = DiagnosticsContainer()
             val content = editor.text
@@ -166,11 +218,35 @@ fun BerryCodeEditor(
         }
     }
 
+    // Publishes the live buffer for the save path, and clears it when the editor goes away.
+    DisposableEffect(editor, textBridge) {
+        textBridge?.attach { editor.text.toString() }
+        onDispose { textBridge?.detach() }
+    }
+
     DisposableEffect(editor) {
         val contentSubscription = editor.subscribeEvent(
             io.github.rosemoe.sora.event.ContentChangeEvent::class.java,
         ) { _, _ ->
-            currentOnChange(editor.text.toString())
+            // `editor.text.toString()` copies the entire buffer, so emitting it on every
+            // keystroke meant a full copy plus a recomposition of the whole editor screen
+            // (and a diagnostics rebuild) per character — the lag that made typing in a
+            // large file feel heavy. Emissions are throttled to one per
+            // [CONTENT_EMIT_INTERVAL_MS], and the last value is always delivered by the
+            // trailing-edge flush below, so no keystroke is ever lost.
+            val now = System.currentTimeMillis()
+            if (now - throttle.lastEmit >= CONTENT_EMIT_INTERVAL_MS) {
+                throttle.lastEmit = now
+                currentOnChange(editor.text.toString())
+            } else if (!throttle.flushScheduled) {
+                throttle.flushScheduled = true
+                scope.launch {
+                    delay(CONTENT_EMIT_INTERVAL_MS)
+                    throttle.flushScheduled = false
+                    throttle.lastEmit = System.currentTimeMillis()
+                    currentOnChange(editor.text.toString())
+                }
+            }
         }
         val selectionSubscription = editor.subscribeEvent(
             io.github.rosemoe.sora.event.SelectionChangeEvent::class.java,

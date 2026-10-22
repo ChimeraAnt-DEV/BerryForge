@@ -28,6 +28,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -51,6 +53,7 @@ import dev.chimeraant.berryforge.ui.design.BerryRadius
 import dev.chimeraant.berryforge.ui.design.BerrySize
 import dev.chimeraant.berryforge.ui.design.BerrySpacing
 import dev.chimeraant.berryforge.ui.design.BerryType
+import dev.chimeraant.berryforge.core.launchSafely
 import kotlinx.coroutines.launch
 
 /**
@@ -71,8 +74,8 @@ fun ToolchainWizardScreen(
     val scope = rememberCoroutineScope()
     val components = remember { viewModel.toolchain.components() }
     var state by remember { mutableStateOf<ToolchainState>(ToolchainState.NotInstalled) }
-    var currentIndex by remember { mutableStateOf(-1) }
-    var fraction by remember { mutableStateOf(0f) }
+    var currentIndex by remember { mutableIntStateOf(-1) }
+    var fraction by remember { mutableFloatStateOf(0f) }
     var installLog by remember { mutableStateOf<List<String>>(emptyList()) }
     var running by remember { mutableStateOf(false) }
     var checkedDisk by remember { mutableStateOf(false) }
@@ -82,7 +85,9 @@ fun ToolchainWizardScreen(
     // (but one whose end-of-run signal was missed, e.g. the app was killed during the
     // final step) transitions straight to Ready instead of demanding a re-install.
     LaunchedEffect(Unit) {
-        viewModel.toolchain.refreshState()
+        // A throw out of a LaunchedEffect takes the whole screen down, and refreshState now
+        // probes the JVM, so it is guarded like every other first-composition read.
+        runCatching { viewModel.toolchain.refreshState() }
         checkedDisk = true
         launch {
             viewModel.toolchain.log.collect { installLog = it }
@@ -96,6 +101,7 @@ fun ToolchainWizardScreen(
                     viewModel.settings.setToolchainReady(true)
                 }
                 is ToolchainState.Failed -> running = false
+                is ToolchainState.ExecBlocked -> running = false
                 else -> Unit
             }
         }
@@ -185,20 +191,24 @@ fun ToolchainWizardScreen(
                     Spacer(Modifier.height(BerrySpacing.lg))
 
                     // ---- Progress ----
-                    if (running || state is ToolchainState.Ready || state is ToolchainState.Failed) {
+                    if (running || state is ToolchainState.Ready || state is ToolchainState.Failed ||
+                        state is ToolchainState.ExecBlocked
+                    ) {
                         val label = when (val current = state) {
                             is ToolchainState.Downloading -> "${current.component} · ${formatBytes(current.bytes)} of ${formatBytes(current.total)}"
                             is ToolchainState.Extracting -> "${current.component} · extracting ${current.entries} files"
                             is ToolchainState.Ready -> "Toolchain ready"
                             is ToolchainState.Failed -> current.message
+                            is ToolchainState.ExecBlocked -> current.message
                             else -> ""
                         }
                         val accent = when (state) {
                             is ToolchainState.Ready -> BerryColors.Success
                             is ToolchainState.Failed -> BerryColors.Danger
+                            is ToolchainState.ExecBlocked -> BerryColors.Danger
                             else -> BerryColors.Edit
                         }
-                        Text(label, style = BerryType.Caption, color = accent, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(label, style = BerryType.Caption, color = accent, maxLines = 4, overflow = TextOverflow.Ellipsis)
                         Spacer(Modifier.height(BerrySpacing.sm))
                         Box(
                             Modifier
@@ -261,12 +271,13 @@ fun ToolchainWizardScreen(
                             fillWidth = true,
                             size = BerryButtonSize.Lg,
                         )
-                        state is ToolchainState.Failed -> Row(horizontalArrangement = Arrangement.spacedBy(BerrySpacing.sm)) {
+                        state is ToolchainState.Failed || state is ToolchainState.ExecBlocked ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(BerrySpacing.sm)) {
                             BerryButton(
                                 text = "Retry",
                                 onClick = {
                                     running = true
-                                    scope.launch { viewModel.toolchain.install { index, _, value ->
+                                    scope.launchSafely(onError = { running = false }) { viewModel.toolchain.install { index, _, value ->
                                         currentIndex = index
                                         fraction = value
                                     } }
@@ -287,7 +298,7 @@ fun ToolchainWizardScreen(
                                 running = true
                                 fraction = 0f
                                 currentIndex = 0
-                                scope.launch {
+                                scope.launchSafely(onError = { running = false }) {
                                     viewModel.toolchain.install { index, _, value ->
                                         currentIndex = index
                                         fraction = value
@@ -333,6 +344,7 @@ private fun statusFor(
     index == currentIndex && state is ToolchainState.Extracting -> ComponentStatus.Extracting
     index == currentIndex && state is ToolchainState.Downloading -> ComponentStatus.Downloading
     index == currentIndex && state is ToolchainState.Failed -> ComponentStatus.Failed
+    index == currentIndex && state is ToolchainState.ExecBlocked -> ComponentStatus.Failed
     else -> ComponentStatus.Pending
 }
 
@@ -391,6 +403,6 @@ private fun ComponentRow(component: ToolchainComponent, status: ComponentStatus,
 internal fun formatBytes(bytes: Long): String = when {
     bytes < 1024 -> "$bytes B"
     bytes < 1024 * 1024 -> "${bytes / 1024} KB"
-    bytes < 1024L * 1024 * 1024 -> String.format("%.1f MB", bytes / 1024.0 / 1024.0)
-    else -> String.format("%.2f GB", bytes / 1024.0 / 1024.0 / 1024.0)
+    bytes < 1024L * 1024 * 1024 -> String.format(java.util.Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0)
+    else -> String.format(java.util.Locale.US, "%.2f GB", bytes / 1024.0 / 1024.0 / 1024.0)
 }
