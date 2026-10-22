@@ -49,6 +49,7 @@ import dev.chimeraant.berryforge.ui.design.BerryRadius
 import dev.chimeraant.berryforge.ui.design.BerrySize
 import dev.chimeraant.berryforge.ui.design.BerrySpacing
 import dev.chimeraant.berryforge.ui.design.BerryType
+import dev.chimeraant.berryforge.core.launchSafely
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -105,7 +106,7 @@ fun ApkTesterScreen(
             BerryIconButton(
                 BerryIcons.Refresh,
                 "Rescan",
-                onClick = { scope.launch { refresh() } },
+                onClick = { scope.launchSafely { refresh() } },
             )
         }
         BerryDivider(strong = true)
@@ -163,7 +164,7 @@ fun ApkTesterScreen(
             destructive = true,
             onConfirm = {
                 viewModel.apkRepository.delete(apk.file)
-                scope.launch { refresh() }
+                scope.launchSafely { refresh() }
             },
         )
     }

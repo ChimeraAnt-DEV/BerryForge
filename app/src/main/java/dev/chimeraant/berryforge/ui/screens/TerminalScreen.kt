@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -25,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.first
+import dev.chimeraant.berryforge.core.launchSafely
 import kotlinx.coroutines.launch
 import dev.chimeraant.berryforge.terminal.BerryTerminalView
 import dev.chimeraant.berryforge.ui.BerryViewModel
@@ -53,15 +55,18 @@ import dev.chimeraant.berryforge.ui.design.BerryType
 fun TerminalScreen(
     viewModel: BerryViewModel,
     onProfileClick: () -> Unit,
-    onManageAccounts: () -> Unit = {},
     modifier: Modifier = Modifier,
+    onManageAccounts: () -> Unit = {},
 ) {
     val user by viewModel.user.collectAsStateWithLifecycle()
     val isOwner by viewModel.isOwner.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-    var fontSize by remember { mutableStateOf(13) }
+    var fontSize by remember { mutableIntStateOf(13) }
     var title by remember { mutableStateOf("shell") }
-    var sessionKey by remember { mutableStateOf(0) }
+    var sessionKey by remember { mutableIntStateOf(0) }
+    // The live PTY session, published by BerryTerminalView. Held so the control strip can
+    // actually drive it instead of printing a hint.
+    var liveSession by remember { mutableStateOf<com.termux.terminal.TerminalSession?>(null) }
 
     LaunchedEffect(Unit) {
         viewModel.settings.terminalFontSize.collect { fontSize = it }
@@ -73,12 +78,18 @@ fun TerminalScreen(
     var environment by remember(sessionKey) { mutableStateOf<Map<String, String>?>(null) }
     LaunchedEffect(environment, sessionKey) {
         if (environment == null) {
-            environment = runCatching {
-                val port = viewModel.settings.mcpPort.first()
-                val token = viewModel.secure.mcpTokenOrCreate()
-                viewModel.shellEnv.ensureShims()
-                viewModel.shellEnv.environment()
-            }.getOrDefault(emptyMap())
+            // ensureShims() writes the shim scripts and .profile, and environment() stats
+            // the toolchain directories: both are disk work. Running them on the main
+            // dispatcher stalled the first terminal open, so the whole block is moved to
+            // IO and the "preparing" state covers the gap.
+            environment = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    viewModel.settings.mcpPort.first()
+                    viewModel.secure.mcpTokenOrCreate()
+                    viewModel.shellEnv.ensureShims()
+                    viewModel.shellEnv.environment()
+                }.getOrDefault(emptyMap())
+            }
         }
     }
     val shellCommand = remember { viewModel.shellEnv.shellCommand() }
@@ -136,6 +147,7 @@ fun TerminalScreen(
                     fontSize = fontSize,
                     modifier = Modifier.fillMaxSize(),
                     onTitle = { title = it.ifBlank { "shell" } },
+                    onSessionChanged = { liveSession = it },
                 )
             }
         }
@@ -150,7 +162,20 @@ fun TerminalScreen(
         ) {
             BerryButton(
                 text = "Ctrl+C",
-                onClick = { viewModel.toast("Send Ctrl+C from the terminal's soft keys.") },
+                onClick = {
+                    // Write the literal ETX byte the PTY interprets as SIGINT. This is
+                    // what the terminal's soft keyboard would send; the previous version
+                    // only showed a toast telling the user to press a key that does not
+                    // exist on the on-screen keyboard, so a hung command could not be
+                    // interrupted at all.
+                    val target = liveSession
+                    if (target == null) {
+                        viewModel.toast("The shell is still starting.")
+                    } else {
+                        runCatching { target.write("\u0003") }
+                            .onFailure { viewModel.toast("Could not interrupt the shell.") }
+                    }
+                },
                 variant = BerryButtonVariant.Ghost,
                 size = BerryButtonSize.Sm,
             )
@@ -168,7 +193,7 @@ fun TerminalScreen(
                 onClick = {
                     val next = (fontSize - 1).coerceAtLeast(9)
                     fontSize = next
-                    scope.launch { viewModel.settings.setTerminalFontSize(next) }
+                    scope.launchSafely { viewModel.settings.setTerminalFontSize(next) }
                 },
                 tint = BerryColors.TextTertiary,
             )
@@ -179,7 +204,7 @@ fun TerminalScreen(
                 onClick = {
                     val next = (fontSize + 1).coerceAtMost(28)
                     fontSize = next
-                    scope.launch { viewModel.settings.setTerminalFontSize(next) }
+                    scope.launchSafely { viewModel.settings.setTerminalFontSize(next) }
                 },
                 tint = BerryColors.TextTertiary,
             )

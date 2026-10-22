@@ -53,6 +53,7 @@ import dev.chimeraant.berryforge.ui.design.BerryRadius
 import dev.chimeraant.berryforge.ui.design.BerrySize
 import dev.chimeraant.berryforge.ui.design.BerrySpacing
 import dev.chimeraant.berryforge.ui.design.BerryType
+import dev.chimeraant.berryforge.core.launchSafely
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 

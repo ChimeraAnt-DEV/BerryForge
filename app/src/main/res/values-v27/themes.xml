@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      API 27+ overlay. `windowLayoutInDisplayCutoutMode` was added in API 27, so it cannot
+      live in the base theme (minSdk 26) without tripping the NewApi lint check and being
+      ignored on a strict OEM build. Declaring it here keeps the base theme clean and the
+      cutout behaviour correct on every device that supports it.
+    -->
+    <style name="Theme.BerryForge" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/berry_base</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>

@@ -49,6 +49,7 @@ import dev.chimeraant.berryforge.ui.components.BerryIcon
 import dev.chimeraant.berryforge.ui.components.BerryIconButton
 import dev.chimeraant.berryforge.ui.components.BerrySearchField
 import dev.chimeraant.berryforge.ui.components.BerryShimmer
+import dev.chimeraant.berryforge.ui.components.rememberShimmerProgress
 import dev.chimeraant.berryforge.ui.components.BerryTopBar
 import dev.chimeraant.berryforge.ui.design.BerryColors
 import dev.chimeraant.berryforge.ui.design.BerryIcons
@@ -71,8 +72,8 @@ fun FileTreeScreen(
     onOpenFile: (String) -> Unit,
     onBack: () -> Unit,
     onProfileClick: () -> Unit,
-    onManageAccounts: () -> Unit = {},
     modifier: Modifier = Modifier,
+    onManageAccounts: () -> Unit = {},
 ) {
     val repo by viewModel.openRepo.collectAsStateWithLifecycle()
     val user by viewModel.user.collectAsStateWithLifecycle()
@@ -83,15 +84,20 @@ fun FileTreeScreen(
     var dirtyPaths by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     val repoValue = repo ?: return
+    // Collect the tree as state. Reading viewModel.tree.value directly inside composition
+    // (the previous code did, twice) neither subscribes to changes nor recomposes when the
+    // tree arrives, so the file list could stay stuck empty until an unrelated recomposition
+    // happened. It is also the StateFlowValueCalledInComposition lint error.
+    val tree by viewModel.tree.collectAsStateWithLifecycle()
     // Refresh the dirty set whenever the tree or the open folder changes, off the main
     // thread: the workspace persists its state to disk, so this is a suspend call.
-    LaunchedEffect(repoValue.fullName, path, viewModel.tree.value) {
+    LaunchedEffect(repoValue.fullName, path, tree) {
         dirtyPaths = runCatching {
             viewModel.workspace.dirtyPaths(repoValue.ownerLogin, repoValue.name).toSet()
         }.getOrDefault(emptySet())
     }
 
-    val children = remember(repoValue.fullName, path, viewModel.tree.value, query) {
+    val children = remember(repoValue.fullName, path, tree, query) {
         val base = viewModel.childrenOf(path)
         if (query.isBlank()) base
         else base.filter { it.name.contains(query, ignoreCase = true) }
@@ -136,7 +142,9 @@ fun FileTreeScreen(
                 Modifier.fillMaxSize().padding(horizontal = BerrySpacing.lg),
                 verticalArrangement = Arrangement.spacedBy(BerrySpacing.xs),
             ) {
-                repeat(8) { BerryShimmer(Modifier.fillMaxWidth().height(44.dp)) }
+                // One transition for the whole skeleton rather than one per row.
+                val shimmer = rememberShimmerProgress()
+                repeat(8) { BerryShimmer(Modifier.fillMaxWidth().height(44.dp), progress = shimmer) }
             }
             children.isEmpty() -> BerryEmptyState(
                 icon = BerryIcons.FolderOpen,
@@ -285,8 +293,9 @@ private fun TreeRow(entry: GhTreeEntry, dirty: Boolean, onClick: () -> Unit) {
             BerryChip("edited", color = BerryColors.Warning, container = BerryColors.Warning.copy(alpha = 0.14f))
             Spacer(Modifier.width(BerrySpacing.sm))
         }
-        if (entry.isFile && entry.size != null && entry.size!! > 0) {
-            Text(humanSize(entry.size!!), style = BerryType.Micro, color = BerryColors.TextDisabled)
+        val size = entry.size
+        if (entry.isFile && size != null && size > 0) {
+            Text(humanSize(size), style = BerryType.Micro, color = BerryColors.TextDisabled)
             Spacer(Modifier.width(BerrySpacing.sm))
         }
         BerryIcon(
@@ -313,5 +322,8 @@ internal fun fileAccent(name: String) = when (name.substringAfterLast('.', "").l
 internal fun humanSize(bytes: Long): String = when {
     bytes < 1024 -> "${bytes} B"
     bytes < 1024 * 1024 -> "${bytes / 1024} KB"
-    else -> String.format("%.1f MB", bytes / 1024.0 / 1024.0)
+    // Locale.US: a device set to a comma-decimal locale (de, fr, tr) would otherwise
+    // render "1,5 MB" and a locale like tr could alter case mapping. Sizes are data,
+    // not prose, so they are formatted in one fixed locale everywhere.
+    else -> String.format(java.util.Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0)
 }

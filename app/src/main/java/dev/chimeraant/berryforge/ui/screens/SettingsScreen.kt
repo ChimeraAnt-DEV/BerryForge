@@ -61,6 +61,8 @@ import dev.chimeraant.berryforge.ui.design.BerrySize
 import dev.chimeraant.berryforge.ui.design.BerrySpacing
 import dev.chimeraant.berryforge.ui.design.BerryType
 import kotlinx.coroutines.flow.first
+import dev.chimeraant.berryforge.core.launchSafely
+import dev.chimeraant.berryforge.core.setting
 import kotlinx.coroutines.launch
 
 /**
@@ -76,8 +78,8 @@ fun SettingsScreen(
     viewModel: BerryViewModel,
     onOpenWizard: () -> Unit,
     onProfileClick: () -> Unit,
-    onManageAccounts: () -> Unit = {},
     modifier: Modifier = Modifier,
+    onManageAccounts: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val user by viewModel.user.collectAsStateWithLifecycle()
@@ -108,24 +110,28 @@ fun SettingsScreen(
     val serverRunning = mcpStatus is McpStatus.Running || mcpStatus is McpStatus.Starting
 
     LaunchedEffect(Unit) {
-        llmEndpoint = viewModel.settings.llmEndpoint.first()
-        llmModel = viewModel.settings.llmModel.first()
-        llmKey = viewModel.secure.llmApiKey.orEmpty()
-        tunnelMode = viewModel.settings.tunnelMode.first()
-        ngrokToken = viewModel.secure.ngrokAuthtoken.orEmpty()
-        relayUrl = viewModel.secure.customRelayUrl.orEmpty()
-        relayToken = viewModel.secure.customRelayToken.orEmpty()
-        mcpPort = viewModel.settings.mcpPort.first().toString()
-        mcpToken = viewModel.secure.mcpTokenOrCreate()
-        sandboxMode = viewModel.settings.sandboxMode.first()
-        approveReads = viewModel.settings.approveReads.first()
-        approveWrites = viewModel.settings.approveWrites.first()
-        approveBuilds = viewModel.settings.approveBuilds.first()
-        fontSize = viewModel.settings.editorFontSize.first().toString()
-        terminalFont = viewModel.settings.terminalFontSize.first().toString()
-        wordWrap = viewModel.settings.editorWordWrap.first()
-        toolchainReady = viewModel.settings.toolchainReady.first()
-        githubPat = viewModel.secure.githubPat.orEmpty()
+        // Every read here can throw: DataStore throws on a corrupt file, and SecureStore
+        // throws when the Keystore entry was invalidated (a restored backup, a changed
+        // lock screen). Unwrapped, the first composition of Settings crashed the app.
+        // Each value falls back to its own default so one bad key cannot blank the screen.
+        llmEndpoint = setting("llmEndpoint") { viewModel.settings.llmEndpoint.first() } ?: llmEndpoint
+        llmModel = setting("llmModel") { viewModel.settings.llmModel.first() } ?: llmModel
+        llmKey = setting("llmApiKey") { viewModel.secure.llmApiKey } ?: llmKey
+        tunnelMode = setting("tunnelMode") { viewModel.settings.tunnelMode.first() } ?: tunnelMode
+        ngrokToken = setting("ngrokToken") { viewModel.secure.ngrokAuthtoken } ?: ngrokToken
+        relayUrl = setting("relayUrl") { viewModel.secure.customRelayUrl } ?: relayUrl
+        relayToken = setting("relayToken") { viewModel.secure.customRelayToken } ?: relayToken
+        mcpPort = setting("mcpPort") { viewModel.settings.mcpPort.first() }?.toString() ?: mcpPort
+        mcpToken = setting("mcpToken") { viewModel.secure.mcpTokenOrCreate() } ?: mcpToken
+        sandboxMode = setting("sandboxMode") { viewModel.settings.sandboxMode.first() } ?: sandboxMode
+        approveReads = setting("approveReads") { viewModel.settings.approveReads.first() } ?: approveReads
+        approveWrites = setting("approveWrites") { viewModel.settings.approveWrites.first() } ?: approveWrites
+        approveBuilds = setting("approveBuilds") { viewModel.settings.approveBuilds.first() } ?: approveBuilds
+        fontSize = setting("editorFontSize") { viewModel.settings.editorFontSize.first() }?.toString() ?: fontSize
+        terminalFont = setting("terminalFontSize") { viewModel.settings.terminalFontSize.first() }?.toString() ?: terminalFont
+        wordWrap = setting("editorWordWrap") { viewModel.settings.editorWordWrap.first() } ?: wordWrap
+        toolchainReady = setting("toolchainReady") { viewModel.settings.toolchainReady.first() } ?: toolchainReady
+        githubPat = setting("githubPat") { viewModel.secure.githubPat } ?: githubPat
     }
 
     Column(modifier.fillMaxSize()) {
@@ -161,7 +167,7 @@ fun SettingsScreen(
                 current = llmModel,
                 onSelect = {
                     llmModel = it
-                    scope.launch {
+                    scope.launchSafely {
                         viewModel.settings.setLlmModel(it)
                         viewModel.toast("Model set to $it.")
                     }
@@ -196,7 +202,7 @@ fun SettingsScreen(
                 BerryButton(
                     text = "Save endpoint",
                     onClick = {
-                        scope.launch {
+                        scope.launchSafely {
                             viewModel.settings.setLlmEndpoint(llmEndpoint)
                             viewModel.settings.setLlmModel(llmModel)
                             viewModel.toast("Endpoint saved.")
@@ -243,7 +249,7 @@ fun SettingsScreen(
                 BerryButton(
                     text = "Test",
                     onClick = {
-                        scope.launch {
+                        scope.launchSafely {
                             runCatching { viewModel.api.me() }
                                 .onSuccess { viewModel.toast("Token works — signed in as ${it.login}.") }
                                 .onFailure {
@@ -411,7 +417,7 @@ fun SettingsScreen(
             BerryButton(
                 text = "Save port",
                 onClick = {
-                    scope.launch {
+                    scope.launchSafely {
                         mcpPort.toIntOrNull()?.let { viewModel.settings.setMcpPort(it) }
                         viewModel.toast("Port saved. Restart the server to apply.")
                     }
@@ -430,7 +436,7 @@ fun SettingsScreen(
                     selected = tunnelMode == mode,
                     onClick = {
                         tunnelMode = mode
-                        scope.launch {
+                        scope.launchSafely {
                             viewModel.settings.setTunnelMode(mode)
                             viewModel.toast("Tunnel set to ${mode.label}. Restart the server to apply.")
                         }
@@ -506,7 +512,7 @@ fun SettingsScreen(
                 trailing = {
                     BerrySwitch(sandboxMode, {
                         sandboxMode = it
-                        scope.launch { viewModel.settings.setSandboxMode(it) }
+                        scope.launchSafely { viewModel.settings.setSandboxMode(it) }
                     }, accent = BerryColors.Success)
                 },
             )
@@ -517,7 +523,7 @@ fun SettingsScreen(
                 trailing = {
                     BerrySwitch(approveReads, {
                         approveReads = it
-                        scope.launch { viewModel.settings.setApproveReads(it) }
+                        scope.launchSafely { viewModel.settings.setApproveReads(it) }
                     }, accent = BerryColors.Warning)
                 },
             )
@@ -529,7 +535,7 @@ fun SettingsScreen(
                 trailing = {
                     BerrySwitch(approveWrites, {
                         approveWrites = it
-                        scope.launch { viewModel.settings.setApproveWrites(it) }
+                        scope.launchSafely { viewModel.settings.setApproveWrites(it) }
                     }, accent = BerryColors.Warning)
                 },
             )
@@ -541,7 +547,7 @@ fun SettingsScreen(
                 trailing = {
                     BerrySwitch(approveBuilds, {
                         approveBuilds = it
-                        scope.launch { viewModel.settings.setApproveBuilds(it) }
+                        scope.launchSafely { viewModel.settings.setApproveBuilds(it) }
                     }, accent = BerryColors.Warning)
                 },
             )
@@ -557,7 +563,7 @@ fun SettingsScreen(
                 trailing = {
                     BerrySwitch(wordWrap, {
                         wordWrap = it
-                        scope.launch { viewModel.settings.setEditorWordWrap(it) }
+                        scope.launchSafely { viewModel.settings.setEditorWordWrap(it) }
                     })
                 },
             )
@@ -582,7 +588,7 @@ fun SettingsScreen(
             BerryButton(
                 text = "Save sizes",
                 onClick = {
-                    scope.launch {
+                    scope.launchSafely {
                         fontSize.toIntOrNull()?.let { viewModel.settings.setEditorFontSize(it) }
                         terminalFont.toIntOrNull()?.let { viewModel.settings.setTerminalFontSize(it) }
                         viewModel.toast("Font sizes saved.")
@@ -754,7 +760,7 @@ private fun ModelPicker(
                     text = if (loading) "Loading…" else "Refresh",
                     onClick = {
                         loading = true
-                        scope.launch {
+                        scope.launchSafely {
                             runCatching {
                                 val result = loadFromEndpoint()
                                 fromEndpoint = result.isSuccess

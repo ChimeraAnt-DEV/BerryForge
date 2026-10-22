@@ -32,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -67,6 +68,13 @@ import dev.chimeraant.berryforge.ui.components.MechaFloatingButton
 import dev.chimeraant.berryforge.ui.components.MechaRole
 import dev.chimeraant.berryforge.ui.components.MechaSheet
 import dev.chimeraant.berryforge.ui.components.MechaTurn
+import dev.chimeraant.berryforge.ai.mecha.FindingSelector
+import dev.chimeraant.berryforge.ai.mecha.MechaBrain
+import dev.chimeraant.berryforge.ai.mecha.MechaContext
+import dev.chimeraant.berryforge.ai.mecha.MechaFixAction
+import dev.chimeraant.berryforge.ai.mecha.MechaHandlers
+import dev.chimeraant.berryforge.ai.mecha.MechaIntent
+import dev.chimeraant.berryforge.ai.mecha.MechaReply
 import dev.chimeraant.berryforge.ui.components.ModelFormats
 import dev.chimeraant.berryforge.ui.components.ModelPreviewSheet
 import dev.chimeraant.berryforge.ui.design.BerryColors
@@ -77,6 +85,7 @@ import dev.chimeraant.berryforge.ui.design.BerrySize
 import dev.chimeraant.berryforge.ui.design.BerrySpacing
 import dev.chimeraant.berryforge.ui.design.BerryType
 import kotlinx.coroutines.flow.first
+import dev.chimeraant.berryforge.core.launchSafely
 import kotlinx.coroutines.launch
 
 /**
@@ -93,8 +102,8 @@ fun EditorScreen(
     path: String,
     onBack: () -> Unit,
     onOpenBuildLog: () -> Unit,
-    initialLine: Int? = null,
     modifier: Modifier = Modifier,
+    initialLine: Int? = null,
 ) {
     val repo by viewModel.openRepo.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
@@ -105,24 +114,33 @@ fun EditorScreen(
     var persistedDirty by remember(path) { mutableStateOf(false) }
     var loading by remember(path) { mutableStateOf(true) }
     var error by remember(path) { mutableStateOf<String?>(null) }
-    var fontSize by remember { mutableStateOf(13) }
+    var fontSize by remember { mutableIntStateOf(13) }
     var wordWrap by remember { mutableStateOf(false) }
     var lineNumbers by remember { mutableStateOf(true) }
-    var tabWidth by remember { mutableStateOf(4) }
+    var tabWidth by remember { mutableIntStateOf(4) }
 
-    var cursorLine by remember { mutableStateOf(1) }
-    var cursorColumn by remember { mutableStateOf(1) }
+    var cursorLine by remember { mutableIntStateOf(1) }
+    var cursorColumn by remember { mutableIntStateOf(1) }
+
+    // The editor throttles its content emissions (a full buffer copy per keystroke was the
+    // typing lag in large files), so `text` can be a few milliseconds stale. Everything
+    // that must not lose a keystroke — save, commit, undo snapshots — reads the live
+    // buffer through this instead.
+    val liveText = remember(path) { dev.chimeraant.berryforge.editor.EditorTextBridge() }
+    fun currentText(): String = liveText.current() ?: text
 
     var review by remember(path) { mutableStateOf<ReviewResult?>(null) }
     var reviewing by remember { mutableStateOf(false) }
     var reviewSheetOpen by remember { mutableStateOf(false) }
     var mechaSheetOpen by remember { mutableStateOf(false) }
     var mechaThinking by remember { mutableStateOf(false) }
-    var mechaTurns by remember(path) {
-        mutableStateOf(
-            listOf(MechaTurn(MechaRole.Bot, "I'm Mecha. Ask me about this file, or tap a finding below and I'll fix it or explain the mistake step by step.")),
-        )
-    }
+    var mechaTurns by remember(path) { mutableStateOf(emptyList<MechaTurn>()) }
+    // Conversation memory: which finding and symbol were last discussed, so "explain it",
+    // "fix that one" and "usages of that" resolve without the user repeating themselves.
+    var mechaLastFinding by remember(path) { mutableStateOf<Int?>(null) }
+    var mechaLastSymbol by remember(path) { mutableStateOf<String?>(null) }
+    // Snapshot of the buffer before the last applied fix, for Undo.
+    var mechaUndoText by remember(path) { mutableStateOf<String?>(null) }
     var findSheetOpen by remember { mutableStateOf(false) }
     var commitSheetOpen by remember { mutableStateOf(false) }
     var findQuery by remember { mutableStateOf("") }
@@ -135,7 +153,7 @@ fun EditorScreen(
 
     // Load the file through the view model, which resolves mirror -> cache -> GitHub and
     // records the blob SHA at every step so a later commit has a base to update against.
-    var reloadToken by remember { mutableStateOf(0) }
+    var reloadToken by remember { mutableIntStateOf(0) }
     LaunchedEffect(path, repoValue.fullName, reloadToken) {
         loading = true
         error = null
@@ -197,24 +215,52 @@ fun EditorScreen(
                 reviewSheetOpen = true
                 if (review == null && !reviewing) {
                     reviewing = true
-                    scope.launch {
-                        val context = dev.chimeraant.berryforge.ai.RepoContext(
-                            repo = repoValue.fullName,
-                            branch = repoValue.defaultBranch,
-                            siblingPaths = viewModel.tree.value?.tree?.take(120)?.map { it.path } ?: emptyList(),
-                        )
-                        viewModel.aiReview.review(path, text, context)
-                            .onSuccess { review = it }
-                            .onFailure { viewModel.toast(it.message ?: "Review failed.") }
-                        reviewing = false
+                    // launchSafely + a finally: `reviewing` must be cleared on every path,
+                    // otherwise a throw leaves the Review button spinning forever with no
+                    // way back except reopening the file.
+                    scope.launchSafely(onError = { viewModel.toast("Review failed: ${it.message ?: "unknown error"}") }) {
+                        try {
+                            val context = dev.chimeraant.berryforge.ai.RepoContext(
+                                repo = repoValue.fullName,
+                                branch = repoValue.defaultBranch,
+                                siblingPaths = viewModel.tree.value?.tree?.take(120)?.map { it.path } ?: emptyList(),
+                            )
+                            viewModel.aiReview.review(path, currentText(), context)
+                                .onSuccess { review = it }
+                                .onFailure { viewModel.toast(it.message ?: "Review failed.") }
+                        } finally {
+                            reviewing = false
+                        }
                     }
                 }
             },
-            onCommit = { commitSheetOpen = true },
-            onSave = {
-                scope.launch {
+            onCommit = {
+                // Flush the buffer before opening the sheet. CommitFlow and dirtyPaths read
+                // the file back off disk, so edits still sitting only in the editor were
+                // invisible to the commit: the sheet could report "No local changes" and
+                // commit an older revision than the one on screen.
+                //
+                // The sheet is opened *after* the write returns, not alongside it. Opening it
+                // concurrently would let its LaunchedEffect read the workspace while the
+                // write was still in flight, which is the same bug in a narrower window.
+                val snapshot = currentText()
+                text = snapshot
+                scope.launchSafely {
                     runCatching {
-                        viewModel.workspace.writeLocal(repoValue.ownerLogin, repoValue.name, path, text)
+                        viewModel.workspace.writeLocal(repoValue.ownerLogin, repoValue.name, path, snapshot)
+                        persistedDirty = true
+                    }.onFailure { failure ->
+                        viewModel.toast("Could not save before committing: ${failure.message ?: "unknown error"}")
+                    }
+                    commitSheetOpen = true
+                }
+            },
+            onSave = {
+                val snapshot = currentText()
+                text = snapshot
+                scope.launchSafely {
+                    runCatching {
+                        viewModel.workspace.writeLocal(repoValue.ownerLogin, repoValue.name, path, snapshot)
                     }.onSuccess {
                         persistedDirty = true
                         viewModel.toast("Saved to the local working copy.")
@@ -276,6 +322,7 @@ fun EditorScreen(
                         cursorLine = line + 1
                         cursorColumn = column + 1
                     },
+                    textBridge = liveText,
                 )
             }
 
@@ -307,13 +354,37 @@ fun EditorScreen(
             isModelView = modelViewMode,
             onToggleModelView = { modelViewMode = !modelViewMode },
             previewHintShown = htmlPreviewSeen,
-            onUndo = { viewModel.toast("Undo") },
-            onFormat = { viewModel.toast("Formatting") },
+            onUndo = {
+                // A real undo of the last buffer-changing action (a Mecha fix, a
+                // replace-all, or a format). Previously this was a toast reading "Undo"
+                // and did nothing at all.
+                text = currentText()
+                val previous = mechaUndoText
+                if (previous == null) {
+                    viewModel.toast("Nothing to undo yet.")
+                } else {
+                    text = previous
+                    mechaUndoText = null
+                    viewModel.toast("Reverted the last change.")
+                }
+            },
+            onFormat = {
+                // A real tidy, not a toast. The buffer is only replaced when the formatter
+                // actually changed something, so a no-op does not mark the file dirty.
+                val before = currentText()
+                if (dev.chimeraant.berryforge.editor.CodeFormatter.isTidy(before, tabWidth)) {
+                    viewModel.toast("Already tidy.")
+                } else {
+                    mechaUndoText = before
+                    text = dev.chimeraant.berryforge.editor.CodeFormatter.tidy(before, tabWidth)
+                    viewModel.toast("Formatted.")
+                }
+            },
             onBuild = onOpenBuildLog,
             onPreview = {
                 if (!htmlPreviewSeen) {
                     htmlPreviewSeen = true
-                    scope.launch { viewModel.settings.setHtmlPreviewSeen(true) }
+                    scope.launchSafely { viewModel.settings.setHtmlPreviewSeen(true) }
                 }
                 previewVisible = true
             },
@@ -348,15 +419,18 @@ fun EditorScreen(
         onDismiss = { reviewSheetOpen = false },
         onRerun = {
             reviewing = true
-            scope.launch {
-                val context = dev.chimeraant.berryforge.ai.RepoContext(
-                    repo = repoValue.fullName,
-                    branch = repoValue.defaultBranch,
-                )
-                viewModel.aiReview.review(path, text, context)
-                    .onSuccess { review = it }
-                    .onFailure { viewModel.toast(it.message ?: "Review failed.") }
-                reviewing = false
+            scope.launchSafely(onError = { viewModel.toast("Review failed: ${it.message ?: "unknown error"}") }) {
+                try {
+                    val context = dev.chimeraant.berryforge.ai.RepoContext(
+                        repo = repoValue.fullName,
+                        branch = repoValue.defaultBranch,
+                    )
+                    viewModel.aiReview.review(path, currentText(), context)
+                        .onSuccess { review = it }
+                        .onFailure { viewModel.toast(it.message ?: "Review failed.") }
+                } finally {
+                    reviewing = false
+                }
             }
         },
     )
@@ -369,8 +443,14 @@ fun EditorScreen(
         onReplacementChange = { replaceWith = it },
         onDismiss = { findSheetOpen = false },
         onReplaceAll = {
-            if (findQuery.isNotBlank()) {
-                text = text.replace(findQuery, replaceWith)
+            val before = currentText()
+            text = before
+            if (findQuery.isNotBlank() && before.contains(findQuery)) {
+                // Snapshot first so the strip's Undo can put the buffer back: a
+                // replace-all across a large file is the easiest thing to trigger by
+                // accident and the hardest to reverse by hand.
+                mechaUndoText = before
+                text = before.replace(findQuery, replaceWith)
                 viewModel.toast("Replaced every occurrence of \"$findQuery\".")
             }
             findSheetOpen = false
@@ -387,7 +467,7 @@ fun EditorScreen(
         onDismiss = { commitSheetOpen = false },
         onCommitted = { branch ->
             viewModel.toast("Pushed to $branch.")
-            originalText = text
+            originalText = currentText()
             persistedDirty = false
         },
     )
@@ -401,7 +481,118 @@ fun EditorScreen(
         )
     }
 
-    // Mecha — the animated AI assistant for this file.
+    // Mecha — a deterministic, instant assistant that only answers from this file's real
+    // contents. Unknown queries optionally fall back to the configured model.
+    fun mechaContext(): MechaContext = MechaContext(
+        path = path,
+        text = currentText(),
+        originalText = originalText,
+        cursorLine = cursorLine,
+        findings = review?.findings.orEmpty(),
+        lastFindingIndex = mechaLastFinding,
+        lastSymbol = mechaLastSymbol,
+    )
+
+    fun applyFixActions(actions: List<MechaFixAction>) {
+        if (actions.isEmpty()) return
+        runCatching {
+            val before = currentText()
+            mechaUndoText = before
+            val lines = before.split('\n').toMutableList()
+            // Apply bottom-up so an earlier edit never shifts a later line number.
+            actions.sortedByDescending { it.startLine }.forEach { action ->
+                if (lines.isEmpty()) return@forEach
+                val start = (action.startLine - 1).coerceIn(0, lines.lastIndex)
+                val end = (action.endLine - 1).coerceIn(start, lines.lastIndex)
+                lines[start] = action.replacement
+                repeat(end - start) { if (start + 1 < lines.size) lines.removeAt(start + 1) }
+            }
+            text = lines.joinToString("\n")
+            viewModel.toast("Mecha applied ${actions.size} fix${if (actions.size == 1) "" else "es"}.")
+        }.onFailure { viewModel.toast("Mecha couldn't apply that fix cleanly — please edit it yourself.") }
+    }
+
+    fun rememberIntent(intent: MechaIntent, ctx: MechaContext) {
+        val count = ctx.findings.size.coerceAtLeast(1)
+        when (intent) {
+            is MechaIntent.ExplainFindings -> intent.selector.index?.let { mechaLastFinding = it }
+            is MechaIntent.FixFindings -> intent.selector.index?.let { mechaLastFinding = it }
+            is MechaIntent.FindSymbol -> mechaLastSymbol = intent.name
+            is MechaIntent.FindUsages -> mechaLastSymbol = intent.name
+            MechaIntent.NextFinding ->
+                mechaLastFinding = ((mechaLastFinding ?: 0) + 1).coerceAtMost(count)
+            MechaIntent.PreviousFinding ->
+                mechaLastFinding = ((mechaLastFinding ?: 2) - 1).coerceAtLeast(1)
+            else -> Unit
+        }
+    }
+
+    fun runMecha(input: String) {
+        val ctx = mechaContext()
+        mechaTurns = mechaTurns + MechaTurn(MechaRole.User, input)
+        when (val intent = MechaBrain.classify(input, ctx)) {
+            is MechaIntent.Unknown -> {
+                // The key check reads encrypted prefs, so it happens off the main thread
+                // along with the request itself — the composer never blocks on I/O.
+                mechaThinking = true
+                val history = mechaTurns.map {
+                    (if (it.role == MechaRole.User) "user" else "assistant") to it.text
+                }
+                scope.launchSafely {
+                    // The whole fallback runs inside runCatching, including the `hasKey()`
+                    // read: it touches the Keystore, which can throw on an invalidated key.
+                    // Without this an exception here escaped the coroutine, cancelled the
+                    // scope and left the composer stuck in the thinking state with no reply
+                    // — or took the activity down through the uncaught handler.
+                    val reply = runCatching {
+                        val hasKey = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            viewModel.aiReview.hasKey()
+                        }
+                        if (hasKey) {
+                            viewModel.aiReview.chat(history, text).getOrElse { failure ->
+                                MechaReply.unknown(input).text +
+                                    "\n\n(Offline answer — the model could not be reached: ${failure.message})"
+                            }
+                        } else {
+                            MechaReply.unknown(input).text
+                        }
+                    }.getOrElse { failure ->
+                        MechaReply.unknown(input).text +
+                            "\n\n(Offline answer — ${failure.message ?: "the assistant could not be reached"})"
+                    }
+                    mechaTurns = mechaTurns + MechaTurn(MechaRole.Bot, reply)
+                    mechaThinking = false
+                }
+            }
+            MechaIntent.Clear -> mechaTurns = listOf(MechaTurn(MechaRole.Bot, MechaHandlers.greetingText(ctx)))
+            MechaIntent.Undo -> {
+                val previous = mechaUndoText
+                if (previous != null) {
+                    text = previous
+                    mechaUndoText = null
+                    mechaTurns = mechaTurns + MechaTurn(MechaRole.Bot, "Reverted to the previous version.")
+                } else {
+                    mechaTurns = mechaTurns + MechaTurn(MechaRole.Bot, "Nothing to undo yet.")
+                }
+            }
+            is MechaIntent.GotoLine -> {
+                cursorLine = intent.line.coerceAtLeast(1)
+                mechaTurns = mechaTurns + MechaTurn(MechaRole.Bot, "Line ${intent.line} is in view now.")
+            }
+            is MechaIntent.Search -> {
+                findQuery = intent.query
+                mechaTurns = mechaTurns + MechaTurn(MechaRole.Bot, "Loaded \"${intent.query}\" into Find.")
+                findSheetOpen = true
+            }
+            else -> {
+                val reply = MechaHandlers.execute(intent, ctx)
+                mechaTurns = mechaTurns + MechaTurn(MechaRole.Bot, reply.text)
+                rememberIntent(intent, ctx)
+                applyFixActions(reply.actions)
+            }
+        }
+    }
+
     MechaSheet(
         visible = mechaSheetOpen,
         findings = review?.findings.orEmpty(),
@@ -409,52 +600,40 @@ fun EditorScreen(
         turns = mechaTurns,
         onDismiss = { mechaSheetOpen = false },
         onFix = { finding ->
-            runCatching {
-                val replacement = (finding.suggestion ?: return@runCatching).trimEnd()
-                val lines = text.split('\n').toMutableList()
-                if (finding.startLine in 1..lines.size) {
-                    val start = (finding.startLine - 1).coerceIn(0, lines.lastIndex)
-                    val end = (finding.endLine - 1).coerceIn(start, lines.lastIndex)
-                    lines[start] = replacement
-                    if (end > start) {
-                        val removeFrom = start + 1
-                        repeat(end - start) { if (removeFrom < lines.size) lines.removeAt(removeFrom) }
-                    }
-                    text = lines.joinToString("\n")
-                    viewModel.toast("Mecha applied the fix for line ${finding.startLine}.")
-                }
-            }.onFailure { viewModel.toast("Mecha couldn't apply that fix cleanly — please edit it yourself.") }
-            mechaTurns = mechaTurns + MechaTurn(
-                MechaRole.Bot,
-                "I replaced the code around line ${finding.startLine}. The suggestion I used was: \"${finding.suggestion?.take(140)}\". Tap Undo if it isn't what you wanted.",
-            )
+            val ctx = mechaContext()
+            val index = ctx.findings.indexOf(finding).takeIf { it >= 0 }?.plus(1)
+            val selector = FindingSelector(index = index)
+            val reply = MechaHandlers.execute(MechaIntent.FixFindings(selector), ctx)
+            mechaTurns = mechaTurns + MechaTurn(MechaRole.Bot, reply.text)
+            index?.let { mechaLastFinding = it }
+            applyFixActions(reply.actions)
         },
         onExplain = { finding ->
-            mechaThinking = true
-            mechaTurns = mechaTurns + MechaTurn(
-                MechaRole.Bot,
-                explanationFor(finding) + "\n\n— Mecha",
-            )
-            scope.launch {
-                kotlinx.coroutines.delay(900)
-                mechaThinking = false
+            val ctx = mechaContext()
+            val index = ctx.findings.indexOf(finding).takeIf { it >= 0 }?.plus(1)
+            val reply = MechaHandlers.execute(MechaIntent.ExplainFindings(FindingSelector(index = index)), ctx)
+            mechaTurns = mechaTurns + MechaTurn(MechaRole.Bot, reply.text)
+            index?.let { mechaLastFinding = it }
+        },
+        onSend = { runMecha(it) },
+        onUndo = {
+            val previous = mechaUndoText
+            if (previous != null) {
+                text = previous
+                mechaUndoText = null
+                mechaTurns = mechaTurns + MechaTurn(MechaRole.Bot, "Reverted to the previous version.")
+            } else {
+                mechaTurns = mechaTurns + MechaTurn(MechaRole.Bot, "Nothing to undo yet.")
             }
         },
     )
-}
 
-/** Plain-English walkthrough for a finding, constructed from data the reviewer already produced. */
-private fun explanationFor(finding: ReviewFinding): String {
-    val where = if (finding.startLine == finding.endLine) "line ${finding.startLine}" else "lines ${finding.startLine}–${finding.endLine}"
-    val effect = when (finding.severity) {
-        dev.chimeraant.berryforge.ai.Severity.Error -> "it will break compilation"
-        dev.chimeraant.berryforge.ai.Severity.Warning -> "it can cause a crash at runtime"
-        dev.chimeraant.berryforge.ai.Severity.Perf -> "it makes this code slower than it needs to be"
-        dev.chimeraant.berryforge.ai.Severity.DeadCode -> "it is never used"
-        dev.chimeraant.berryforge.ai.Severity.Info -> "it is worth reviewing"
+    // Greet with real state the first time the sheet opens for this file.
+    LaunchedEffect(mechaSheetOpen, path) {
+        if (mechaSheetOpen && mechaTurns.isEmpty()) {
+            mechaTurns = listOf(MechaTurn(MechaRole.Bot, MechaHandlers.greetingText(mechaContext())))
+        }
     }
-    return "Here's what's happening on $where. The flagged issue is ${finding.category.label.lowercase()}. In short, $effect. " +
-        "The reviewer: \"${finding.message}\"${finding.suggestion?.let { ". Try changing it to:\n\n$it" } ?: ""}"
 }
 
 @Composable

@@ -64,6 +64,7 @@ import dev.chimeraant.berryforge.ui.design.BerryRadius
 import dev.chimeraant.berryforge.ui.design.BerrySize
 import dev.chimeraant.berryforge.ui.design.BerrySpacing
 import dev.chimeraant.berryforge.ui.design.BerryType
+import dev.chimeraant.berryforge.core.launchSafely
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 
@@ -85,8 +86,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 fun AgentScreen(
     viewModel: BerryViewModel,
     onProfileClick: () -> Unit,
-    onManageAccounts: () -> Unit = {},
     modifier: Modifier = Modifier,
+    onManageAccounts: () -> Unit = {},
 ) {
     val events by viewModel.sessions.events.collectAsStateWithLifecycle()
     val current by viewModel.sessions.current.collectAsStateWithLifecycle()
@@ -147,14 +148,14 @@ fun AgentScreen(
             sandboxMode = sandboxMode,
             onSandboxChange = {
                 sandboxMode = it
-                scope.launch { viewModel.settings.setSandboxMode(it) }
+                scope.launchSafely { viewModel.settings.setSandboxMode(it) }
             },
             approveReads = approveReads,
-            onApproveReads = { approveReads = it; scope.launch { viewModel.settings.setApproveReads(it) } },
+            onApproveReads = { approveReads = it; scope.launchSafely { viewModel.settings.setApproveReads(it) } },
             approveWrites = approveWrites,
-            onApproveWrites = { approveWrites = it; scope.launch { viewModel.settings.setApproveWrites(it) } },
+            onApproveWrites = { approveWrites = it; scope.launchSafely { viewModel.settings.setApproveWrites(it) } },
             approveBuilds = approveBuilds,
-            onApproveBuilds = { approveBuilds = it; scope.launch { viewModel.settings.setApproveBuilds(it) } },
+            onApproveBuilds = { approveBuilds = it; scope.launchSafely { viewModel.settings.setApproveBuilds(it) } },
         )
 
         Spacer(Modifier.height(BerrySpacing.md))
@@ -257,7 +258,7 @@ fun AgentScreen(
             confirmLabel = "Revert",
             destructive = true,
             onConfirm = {
-                scope.launch {
+                scope.launchSafely {
                     runCatching { viewModel.sessions.revertSession(session) }
                         .onSuccess { count ->
                             viewModel.toast("Reverted $count file(s).")

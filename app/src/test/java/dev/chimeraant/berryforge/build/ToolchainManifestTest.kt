@@ -102,4 +102,66 @@ class ToolchainManifestTest {
             assertTrue("duplicate pinned packages in one list: $duplicates", duplicates.isEmpty())
         }
     }
+
+    /**
+     * The self-heal path: when a pinned URL 404s, the installer re-resolves the package
+     * by name against the live index. These use a verbatim slice of the real Termux
+     * index so the field names and layout match production exactly.
+     */
+    private val realIndexSlice = """
+        Package: openjdk-21-x
+        Version: 21.0.13
+        Filename: pool/main/o/openjdk-21/openjdk-21-x_21.0.13_aarch64.deb
+        Size: 14000000
+        SHA256: 1111111111111111111111111111111111111111111111111111111111111111
+
+        Package: openjdk-21
+        Installed-Size: 249296
+        Version: 21.0.13
+        Depends: libandroid-shmem, libandroid-spawn
+        Filename: pool/main/o/openjdk-21/openjdk-21_21.0.13_aarch64.deb
+        Size: 106105996
+        MD5sum: 58c0bab678ed5399b9727ad5190c03a4
+        SHA256: 5e5bff2252236b30339a68739834ec98baf858f19905f9fae87198bf5b117cb2
+        Description: Java development kit and runtime
+
+        Package: zlib
+        Filename: pool/main/z/zlib/zlib_1.3.2_aarch64.deb
+        Size: 62840
+        SHA256: 75e7d0af17fcc3b40004309fdc00a1ddb9ae08346dce5e269902c34ac3966ac9
+
+    """.trimIndent()
+
+    @Test
+    fun indexLookupReturnsTheMatchingStanza() {
+        val pkg = parseIndex(realIndexSlice, "openjdk-21")
+        assertTrue("openjdk-21 must resolve from the index", pkg != null)
+        pkg!!
+        assertEquals("pool/main/o/openjdk-21/openjdk-21_21.0.13_aarch64.deb", pkg.filename)
+        assertEquals(106105996L, pkg.size)
+        assertEquals("5e5bff2252236b30339a68739834ec98baf858f19905f9fae87198bf5b117cb2", pkg.sha256)
+        assertEquals(
+            "https://packages.termux.dev/apt/termux-main/pool/main/o/openjdk-21/openjdk-21_21.0.13_aarch64.deb",
+            pkg.url,
+        )
+    }
+
+    @Test
+    fun indexLookupDoesNotConfusePrefixSiblings() {
+        // "openjdk-21-x" also starts with "openjdk-21"; a substring match would grab the
+        // wrong stanza, which is why the parser compares the whole Package: value.
+        val pkg = parseIndex(realIndexSlice, "openjdk-21")!!
+        assertFalse("must not resolve openjdk-21-x for openjdk-21", pkg.filename.contains("-x_"))
+    }
+
+    @Test
+    fun indexLookupReturnsNullForUnknownPackage() {
+        assertEquals(null, parseIndex(realIndexSlice, "not-a-real-package"))
+    }
+
+    @Test
+    fun indexLookupRejectsIncompleteStanza() {
+        val truncated = "Package: broken\nVersion: 1\nFilename: pool/main/b/broken/broken_1_aarch64.deb\n"
+        assertEquals(null, parseIndex(truncated, "broken"))
+    }
 }

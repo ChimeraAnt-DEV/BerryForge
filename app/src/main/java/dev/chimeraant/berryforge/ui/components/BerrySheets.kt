@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.chimeraant.berryforge.ui.design.BerryColors
@@ -96,10 +97,19 @@ fun BerrySheet(
             ) + fadeOut(tween(BerryMotion.Fast)),
         ) {
             val shape = RoundedCornerShape(topStart = BerryRadius.xxl, topEnd = BerryRadius.xxl)
+            val maxHeight = sheetMaxHeight(LocalConfiguration.current.screenHeightDp, maxHeightFraction)
             Column(
                 modifier = modifier
                     .fillMaxWidth()
-                    .heightIn(max = Dp.Infinity)
+                    // A finite max height is load-bearing, not cosmetic. This was
+                    // heightIn(max = Dp.Infinity) — a no-op — so the sheet was measured
+                    // with an infinite height constraint. The Mecha sheet puts a weighted
+                    // LazyColumn inside it, and a weighted child under an unbounded
+                    // constraint is the classic "measured with infinity maximum height"
+                    // IllegalStateException: opening the sheet took the process down.
+                    // A bounded maximum also stops a tall commit sheet growing off the
+                    // top of the display where its buttons could never be reached.
+                    .heightIn(max = maxHeight)
                     .clip(shape)
                     .background(BerryColors.Surface1)
                     .navigationBarsPadding()
@@ -152,6 +162,23 @@ fun BerrySheet(
             }
         }
     }
+}
+
+/**
+ * The finite maximum height a sheet may occupy, in Dp.
+ *
+ * Extracted and made pure so the value that caused the sheet bug is directly testable:
+ * the previous code used `heightIn(max = Dp.Infinity)`, which is a no-op, leaving the
+ * sheet measured under an unbounded height constraint. That both pushed tall content
+ * (the commit diff, the Mecha transcript) off the top of the screen with no way to reach
+ * the action buttons, and is the classic infinity-constraint crash for a weighted child.
+ *
+ * A non-finite or out-of-range fraction is clamped rather than trusted, so no caller can
+ * reintroduce an unbounded sheet by passing `Float.NaN` or a value above 1.
+ */
+internal fun sheetMaxHeight(screenHeightDp: Int, fraction: Float): Dp {
+    val safeFraction = if (fraction.isFinite()) fraction.coerceIn(0.25f, 1f) else 0.88f
+    return (screenHeightDp.coerceAtLeast(1) * safeFraction).dp
 }
 
 /** Centred dialog used for destructive confirmations and approval gates. */
@@ -387,22 +414,35 @@ fun BerryEmptyState(
     }
 }
 
-/** Skeleton shimmer for list placeholders — no spinners on primary surfaces. */
+/**
+ * Skeleton shimmer for list placeholders — no spinners on primary surfaces.
+ *
+ * [progress] lets a caller hoist the sweep out of the rows: a skeleton list rendering eight
+ * of these would otherwise run eight independent infinite transitions, each invalidating
+ * its own gradient every frame. One shared transition keeps the sweep in phase (which looks
+ * correct — a torn sweep per row looks broken) and costs a single animation.
+ */
 @Composable
 fun BerryShimmer(
     modifier: Modifier = Modifier,
     radius: Dp = BerryRadius.sm,
+    progress: Float? = null,
 ) {
-    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "shimmer")
-    val progress by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
-            animation = tween(1100, easing = androidx.compose.animation.core.LinearEasing),
-            repeatMode = androidx.compose.animation.core.RepeatMode.Restart,
-        ),
-        label = "shimmerProgress",
-    )
+    val animated = if (progress == null) {
+        val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "shimmer")
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                animation = tween(1100, easing = androidx.compose.animation.core.LinearEasing),
+                repeatMode = androidx.compose.animation.core.RepeatMode.Restart,
+            ),
+            label = "shimmerProgress",
+        )
+    } else {
+        null
+    }
+    val value = progress ?: animated!!.value
     Box(
         modifier
             .clip(RoundedCornerShape(radius))
@@ -413,9 +453,30 @@ fun BerryShimmer(
                         BerryColors.Surface3,
                         BerryColors.Surface2,
                     ),
-                    startX = -400f + progress * 900f,
-                    endX = -200f + progress * 900f,
+                    startX = -400f + value * 900f,
+                    endX = -200f + value * 900f,
                 ),
             ),
     )
+}
+
+/**
+ * The sweep value a skeleton list shares between its rows.
+ *
+ * Hoisted so `repeat(n) { BerryShimmer(progress = shimmer) }` runs one transition for the
+ * whole list instead of one per row.
+ */
+@Composable
+fun rememberShimmerProgress(): Float {
+    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "shimmerList")
+    val progress by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = tween(1100, easing = androidx.compose.animation.core.LinearEasing),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Restart,
+        ),
+        label = "shimmerListProgress",
+    )
+    return progress
 }

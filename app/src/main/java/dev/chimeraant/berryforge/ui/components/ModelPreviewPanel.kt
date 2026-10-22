@@ -1,5 +1,6 @@
 package dev.chimeraant.berryforge.ui.components
 
+import android.annotation.SuppressLint
 import android.webkit.WebViewClient
 import android.webkit.WebView
 import androidx.compose.foundation.background
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
@@ -33,19 +35,24 @@ import dev.chimeraant.berryforge.ui.design.BerryType
  * Binary GLB / binary-STL can't survive the text pipeline and are reported politely.
  */
 object ModelFormats {
-    private val extensions = listOf("obj", "stl", "gltf", "geo.json", "geojson")
+    private val extensions = listOf("obj", "stl", "gltf", "glb", "geo.json", "geojson")
 
     fun isModelFormat(path: String): Boolean {
         val lower = path.lowercase()
         return extensions.any { lower.endsWith(".$it") }
     }
 
+    /** Formats that cannot survive the text pipeline (binary payloads). */
     fun isBinary(path: String): Boolean {
         val lower = path.lowercase()
         return lower.endsWith(".glb")
     }
 }
 
+// WebGL needs JavaScript; the viewer document is generated locally and the WebView is
+// locked down (no file, content or cross-origin access). Lint's blanket warning for
+// setJavaScriptEnabled does not apply to a self-contained, offline canvas.
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun ModelPreviewSheet(
     path: String,
@@ -68,7 +75,11 @@ fun ModelPreviewSheet(
                 )
             }
         } else {
-            val html = inlineViewerHtml(rawText)
+            // The generated page is large (a full WebGL renderer plus the model text) and
+            // identical for identical input, so it is built once per source rather than on
+            // every recomposition.
+            val html = remember(rawText) { inlineViewerHtml(rawText) }
+            val loaded = remember { LoadedModel() }
             AndroidView(
                 factory = { context ->
                     WebView(context).apply {
@@ -77,11 +88,38 @@ fun ModelPreviewSheet(
                         settings.domStorageEnabled = false
                         settings.allowFileAccess = false
                         settings.allowContentAccess = false
+                        // JavaScript is required to run WebGL, but the viewer never needs
+                        // to reach outside its own document. On API 26-29 these two flags
+                        // default to *true*, which would let a crafted model file issue
+                        // cross-origin and file:// requests. Both are pinned off.
+                        settings.allowFileAccessFromFileURLs = false
+                        settings.allowUniversalAccessFromFileURLs = false
+                        settings.javaScriptCanOpenWindowsAutomatically = false
                         webViewClient = WebViewClient()
                     }
                 },
                 modifier = Modifier.fillMaxSize(),
-                update = { it.loadDataWithBaseURL(null, html, "text/html", "utf-8", null) },
+                update = { webView ->
+                    // Only re-inject when the document actually changed. Re-injecting an
+                    // identical page restarted the renderer and reset the camera on every
+                    // recomposition, so the model snapped back to its initial orientation
+                    // while the user was still dragging it.
+                    if (loaded.html != html) {
+                        loaded.html = html
+                        webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+                    }
+                },
+                onRelease = { webView ->
+                    // Stops the WebGL context and the animation loop instead of leaking a
+                    // renderer process every time a model preview is opened and closed.
+                    runCatching {
+                        webView.stopLoading()
+                        webView.loadUrl("about:blank")
+                        webView.clearHistory()
+                        webView.removeAllViews()
+                        webView.destroy()
+                    }
+                },
             )
         }
     }
@@ -90,8 +128,11 @@ fun ModelPreviewSheet(
 /**
  * Builds a self-contained WebGL page for the given text. The viewer parses OBJ, ASCII
  * STL, embedded JSON GLTF and GeoJSON with no external libraries.
+ *
+ * Internal rather than private so the generated markup can be asserted in unit tests —
+ * the blank-canvas regression below is invisible to a compiler.
  */
-private fun inlineViewerHtml(rawText: String): String {
+internal fun inlineViewerHtml(rawText: String): String {
     val safe = rawText
         .replace("\\", "\\\\")
         .replace("\"", "\\\"")
@@ -107,13 +148,14 @@ private fun inlineViewerHtml(rawText: String): String {
   #err{display:none;position:absolute;inset:0;align-items:center;justify-content:center;padding:1rem;box-sizing:border-box;text-align:center;color:#f0475c}
   canvas{display:block;width:100vw;height:100vh;cursor:grab}
   #hint{position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:12px;color:#66718c;pointer-events:none}
-</style></head><body><canvas id="c"></canvas><div id="hint">drag to rotate · pinch/scroll to zoom</div></body>
+</style></head><body><canvas id="c"></canvas><div id="err"></div><div id="hint">drag to rotate · pinch/scroll to zoom</div></body>
 <script>
 var DATA = "$safe";
 var canvas = document.getElementById('c');
+function fail(msg){var e=document.getElementById('err');if(e){e.style.display='flex';e.textContent=msg;}}
 var gl = null;
 try{ gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl'); }catch(e){}
-if(!gl){document.getElementById('err').style.display='flex';document.getElementById('err').textContent='WebGL is unavailable on this device.';throw new Error('no webgl');}
+if(!gl){fail('WebGL is unavailable on this device.');throw new Error('no webgl');}
 
 function compile(type, src){var s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);return s;}
 var vsh="attribute vec3 p;attribute vec3 n;uniform mat4 mvp;uniform mat4 nm;uniform vec3 lightDir;varying vec3 vn;varying vec3 vp;void main(){vn=normalize(mat3(nm)*n);vp=(mvp*vec4(p,1.0)).xyz;gl_Position=mvp*vec4(p,1.0);}";
@@ -125,10 +167,18 @@ function build(positions, normals, indexCount, model){
   gl.useProgram(prog);
   var pb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,pb);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(positions),gl.STATIC_DRAW);
   var nb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,nb);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(normals),gl.STATIC_DRAW);
-  var ib=gl.createBuffer();gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint16Array(indexCount),gl.STATIC_DRAW);
+  // Pick the narrowest index type that can address every vertex. A GLTF mesh with more
+  // than 65535 vertices would otherwise wrap when crammed into a Uint16Array, drawing
+  // scrambled geometry; if the extension is missing, fall back to Uint16 rather than
+  // throwing at load time.
+  var maxIdx=0;for(var i=0;i<indexCount.length;i++){if(indexCount[i]>maxIdx)maxIdx=indexCount[i];}
+  var use32=maxIdx>65535&&(gl.getExtension('OES_element_index_uint')||gl.getExtension('WEBGL_element_index_uint'));
+  var indices=use32?new Uint32Array(indexCount):new Uint16Array(indexCount);
+  var ib=gl.createBuffer();gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,indices,gl.STATIC_DRAW);
   var aP=gl.getAttribLocation(prog,'p');gl.enableVertexAttribArray(aP);gl.bindBuffer(gl.ARRAY_BUFFER,pb);gl.vertexAttribPointer(aP,3,gl.FLOAT,false,0,0);
   var aN=gl.getAttribLocation(prog,'n');gl.enableVertexAttribArray(aN);gl.bindBuffer(gl.ARRAY_BUFFER,nb);gl.vertexAttribPointer(aN,3,gl.FLOAT,false,0,0);
-  return {prog:prog, count:indexCount, ib:ib, uvp:gl.getUniformLocation(prog,'mvp'), un:gl.getUniformLocation(prog,'nm'), ub:gl.getUniformLocation(prog,'base')};
+  // count is the NUMBER of indices, not the array itself: drawElements needs a GLsizei.
+  return {prog:prog, count:indexCount.length, ib:ib, idxType:use32?gl.UNSIGNED_INT:gl.UNSIGNED_SHORT, uvp:gl.getUniformLocation(prog,'mvp'), un:gl.getUniformLocation(prog,'nm'), ub:gl.getUniformLocation(prog,'base')};
 }
 
 // ---- Tiny OBJ parser ----
@@ -210,34 +260,59 @@ function parseGeoJSON(txt){
   return {positions:pos,normals:nrm,index:ind,color:'#4C8DFF'};
 }
 // ---- Embedded GLTF (JSON) best effort ----
+// An accessor is read through a DataView so byteStride (interleaved buffers) is
+// honoured and an unaligned byteOffset cannot throw: a Float32Array view over an
+// offset that is not a multiple of 4 raises a RangeError and blanks the canvas.
+function readAccessor(j, accIdx){
+  var acc=j.accessors[accIdx];if(!acc)return null;
+  var bv=j.bufferViews[acc.bufferView];if(!bv)return null;
+  var buf=j.buffers[bv.buffer];if(!buf||!buf.uri||buf.uri.indexOf('data:')!==0)return null;
+  var bin=atob(buf.uri.slice(buf.uri.indexOf(',')+1));
+  var bytes=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+  var dv=new DataView(bytes.buffer);
+  var compCnt={SCALAR:1,VEC2:2,VEC3:3,VEC4:4}[acc.type]||3;
+  var compSize={5120:1,5121:1,5122:2,5123:2,5125:4,5126:4}[acc.componentType]||4;
+  var stride=bv.byteStride||compCnt*compSize;
+  var start=(acc.byteOffset||0)+(bv.byteOffset||0);
+  var out=[];
+  for(var i=0;i<acc.count;i++){
+    var o=start+i*stride;
+    for(var c=0;c<compCnt;c++){
+      var p=o+c*compSize,v;
+      if(acc.componentType===5126)v=dv.getFloat32(p,true);
+      else if(acc.componentType===5125)v=dv.getUint32(p,true);
+      else if(acc.componentType===5123)v=dv.getUint16(p,true);
+      else if(acc.componentType===5122)v=dv.getInt16(p,true);
+      else if(acc.componentType===5121)v=dv.getUint8(p);
+      else v=dv.getInt8(p);
+      out.push(v);
+    }
+  }
+  return out;
+}
 function parseGLTF(txt){
   var j=JSON.parse(txt);var pos=[],nrm=[],ind=[];
   (j.meshes||[]).forEach(function(mesh){
     (mesh.primitives||[]).forEach(function(prim){
       var a=prim.attributes||{};
       if(a.POSITION===undefined||a.POSITION===null)return;
-      var acc=j.accessors[a.POSITION];if(!acc)return;
-      var bv=j.bufferViews[acc.bufferView];var buf=j.buffers[bv.buffer];
-      var b64=null;
-      if(buf.uri&&buf.uri.indexOf('data:')===0){var comma=buf.uri.indexOf(',');b64=buf.uri.slice(comma+1);}
-      if(!b64)return;
-      var bin=atob(b64);var arr=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
-      var byteOffset=(acc.byteOffset||0)+(bv.byteOffset||0);
-      var compCnt={SCALAR:1,VEC2:2,VEC3:3,VEC4:4}[acc.type]||3;
-      var floats=new Float32Array(arr.buffer,byteOffset,acc.count*compCnt);
-      for(var i=0;i<acc.count*compCnt;i+=compCnt){pos.push(floats[i],floats[i+1],floats[i+2]);}
-      // normals if present
-      var N=null;
-      if(a.NORMAL!==undefined&&a.NORMAL!==null){var nacc=j.accessors[a.NORMAL];if(nacc){var nbv=j.bufferViews[nacc.bufferView]; var nbuf=j.buffers[nbv.buffer]; var nb64=nbuf.uri&&nbuf.uri.indexOf('data:')===0?nbuf.uri.slice(nbuf.uri.indexOf(',')+1):null; if(nb64){var nb=atob(nb64);var nArr=new Uint8Array(nb.length);for(var i=0;i<nb.length;i++)nArr[i]=nb.charCodeAt(i); N=new Float32Array(nArr.buffer,(nacc.byteOffset||0)+(nbv.byteOffset||0),nacc.count*3);}}}
-      var idx=null,idxCount=0;
-      if(prim.indices!==undefined&&prim.indices!==null){var idxAcc=j.accessors[prim.indices];if(idxAcc){var idxBv=j.bufferViews[idxAcc.bufferView];var idxBuf=j.buffers[idxBv.buffer];var i64=idxBuf.uri&&idxBuf.uri.indexOf('data:')===0?idxBuf.uri.slice(idxBuf.uri.indexOf(',')+1):null;if(i64){var ib=atob(i64);var iArr=new Uint8Array(ib.length);for(var i=0;i<ib.length;i++)iArr[i]=ib.charCodeAt(i);idx=new (idxAcc.componentType===5123?Uint16Array:Uint32Array)(iArr.buffer,(idxAcc.byteOffset||0)+(idxBv.byteOffset||0),idxAcc.count);idxCount=idxAcc.count;}}}
+      var pv=readAccessor(j,a.POSITION);
+      if(!pv||pv.length<3)return;
+      var vcount=pv.length/3;
+      var nv=(a.NORMAL!==undefined&&a.NORMAL!==null)?readAccessor(j,a.NORMAL):null;
+      var iv=(prim.indices!==undefined&&prim.indices!==null)?readAccessor(j,prim.indices):null;
       var base=pos.length/3;
-      if(idx){for(var i=0;i<idxCount;i++)ind.push(base+idx[i]);}
-      else{for(var i=0;i<acc.count;i++){if(i%4<3)ind.push(base+i);}}
-      for(var i=0;i<acc.count;i++){if(N){nrm.push(N[i*3],N[i*3+1],N[i*3+2]);}else{nrm.push(0,0,1);}}
+      for(var i=0;i<pv.length;i++)pos.push(pv[i]);
+      for(var i=0;i<vcount;i++){
+        if(nv&&nv.length>=i*3+3)nrm.push(nv[i*3],nv[i*3+1],nv[i*3+2]);
+        else nrm.push(0,0,1);
+      }
+      // Non-indexed geometry: every three vertices form one triangle.
+      if(iv&&iv.length){for(var i=0;i<iv.length;i++)ind.push(base+iv[i]);}
+      else{for(var i=0;i+2<vcount;i+=3)ind.push(base+i,base+i+1,base+i+2);}
     });
   });
-  if(ind.length===0) throw new Error('No buffer geometry found in GLTF data.');
+  if(ind.length===0)throw new Error('No buffer geometry found in GLTF data.');
   return {positions:pos,normals:nrm,index:ind};
 }
 
@@ -251,7 +326,7 @@ try{
     if(first==='{'){try{var j=JSON.parse(DATA);if(j.meshes)model=parseGLTF(DATA);else model=parseGeoJSON(DATA);}catch(e){model=parseOBJ(DATA);}}
     else{model=parseOBJ(DATA);}
   }
-}catch(e){document.getElementById('err').style.display='flex';document.getElementById('err').textContent='Could not parse this model: '+e.message;throw e;}
+}catch(e){fail('Could not parse this model: '+e.message);throw e;}
 
 // ---- center & scale ----
 var min=[1e9,1e9,1e9],max=[-1e9,-1e9,-1e9];
@@ -278,8 +353,7 @@ function mat4rotXY(rx,ry){var cX=Math.cos(rx),sX=Math.sin(rx),cY=Math.cos(ry),sY
 function mat4trans(x,y,z){return [1,0,0,x, 0,1,0,y, 0,0,1,z, 0,0,0,1];}
 function mat4scale(s){return [s,0,0,0, 0,s,0,0, 0,0,s,0, 0,0,0,1];}
 var P=mat4persp(0.9,1,0.1,100);
-var drag=false,lx=0,ly=0;
-canvas.addEventListener('mousedown',function(e){drag=true;lx=e.clientX;ly=e.clientY;canvas.style.cursor='grabbing';});
+var drag=false,lx=0,ly=0;canvas.addEventListener('mousedown',function(e){drag=true;lx=e.clientX;ly=e.clientY;canvas.style.cursor='grabbing';});
 window.addEventListener('mouseup',function(){drag=false;canvas.style.cursor='grab';});
 window.addEventListener('mousemove',function(e){if(!drag)return;RY+=(e.clientX-lx)*0.008;RX+=(e.clientY-ly)*0.008;lx=e.clientX;ly=e.clientY;});
 canvas.addEventListener('touchstart',function(e){if(e.touches.length===1){drag=true;lx=e.touches[0].clientX;ly=e.touches[0].clientY;}},{passive:true});
@@ -298,11 +372,16 @@ function render(){
   gl.uniformMatrix4fv(mesh.un,false,new Float32Array(NM));
   gl.uniform3f(mesh.ub,0.298,0.545,0.72);
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,mesh.ib);
-  gl.drawElements(gl.TRIANGLES,mesh.count,gl.UNSIGNED_SHORT,0);
+  gl.drawElements(gl.TRIANGLES,mesh.count,mesh.idxType,0);
   if(drag)requestAnimationFrame(render);
 }
-function loop(){if(!drag){RY+=0.002;}render();requestAnimationFrame(loop);}
-function resize(){canvas.width=canvas.clientWidth;canvas.height=canvas.clientHeight;}
+function loop(){if(!drag){RY+=0.002;}try{render();}catch(e){fail('Render error: '+e.message);return;}requestAnimationFrame(loop);}
+function resize(){canvas.width=canvas.clientWidth;canvas.height=canvas.clientHeight;var asp=canvas.height>0?canvas.width/canvas.height:1;P=mat4persp(0.9,asp,0.1,100);}
 window.addEventListener('resize',resize);resize();loop();
 </script></body></html>"""
+}
+
+/** The document currently loaded into the model viewer, so it is injected only once. */
+private class LoadedModel {
+    var html: String? = null
 }

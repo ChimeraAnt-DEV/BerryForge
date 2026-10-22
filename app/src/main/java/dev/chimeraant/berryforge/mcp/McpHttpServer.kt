@@ -8,6 +8,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import dev.chimeraant.berryforge.core.launchSafely
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
@@ -98,7 +99,10 @@ class McpHttpServer(
         boundPort = socket.localPort
         running = true
         boundToLan = bindAddress != LOOPBACK
-        acceptJob = scope.launch { acceptLoop(socket) }
+        // launchSafely: an accept-loop failure must be logged, not delivered to the
+        // scope's default handler, which would rethrow on the main thread and kill the
+        // process while the server was supposedly still running.
+        acceptJob = scope.launchSafely { acceptLoop(socket) }
         Log.i(TAG, "MCP server bound to $bindAddress:$boundPort")
         boundPort
     }.onFailure { error ->
@@ -141,7 +145,10 @@ class McpHttpServer(
                 continue
             }
             activeConnections.incrementAndGet()
-            scope.launch {
+            // One misbehaving connection must not take the whole server (or the app)
+            // down: handleClient catches Exception, and this catches anything it lets
+            // through while still releasing the connection slot.
+            scope.launchSafely {
                 try {
                     handleClient(client)
                 } finally {

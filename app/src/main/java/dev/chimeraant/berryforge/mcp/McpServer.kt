@@ -1,6 +1,7 @@
 package dev.chimeraant.berryforge.mcp
 
 import android.content.Context
+import android.util.Log
 import dev.chimeraant.berryforge.build.BuildLogParser
 import dev.chimeraant.berryforge.build.GradleRunner
 import dev.chimeraant.berryforge.data.editor.EditorWorkspace
@@ -143,19 +144,37 @@ class McpServer(
             return Mcp.error(id, Mcp.INVALID_REQUEST, "Missing 'method'.").toString()
         }
 
-        val response = when (method) {
-            "initialize" -> handleInitialize(id, params)
-            "ping" -> Mcp.result(id, buildJsonObject {})
-            "tools/list" -> handleToolsList(id)
-            "tools/call" -> handleToolsCall(id, params)
-            "resources/list" -> Mcp.result(id, buildJsonObject {
-                put("resources", buildJsonArray {})
-            })
-            "prompts/list" -> Mcp.result(id, buildJsonObject {
-                put("prompts", buildJsonArray {})
-            })
-            "logging/setLevel" -> Mcp.result(id, buildJsonObject {})
-            else -> Mcp.error(id, Mcp.METHOD_NOT_FOUND, "Unknown method '$method'.")
+        // A tool is arbitrary code: a bad path, a Gradle failure or a JSON shape it did
+        // not expect can throw. Left uncaught that propagates out of the HTTP handler and
+        // the client is left with a dropped connection and no error to act on — the worst
+        // possible outcome for an agent. A JSON-RPC error response keeps the session
+        // alive and tells the caller exactly what failed.
+        val response = try {
+            when (method) {
+                "initialize" -> handleInitialize(id, params)
+                "ping" -> Mcp.result(id, buildJsonObject {})
+                "tools/list" -> handleToolsList(id)
+                "tools/call" -> handleToolsCall(id, params)
+                "resources/list" -> Mcp.result(id, buildJsonObject {
+                    put("resources", buildJsonArray {})
+                })
+                "prompts/list" -> Mcp.result(id, buildJsonObject {
+                    put("prompts", buildJsonArray {})
+                })
+                "logging/setLevel" -> Mcp.result(id, buildJsonObject {})
+                else -> Mcp.error(id, Mcp.METHOD_NOT_FOUND, "Unknown method '$method'.")
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            Log.e(TAG, "MCP method '$method' failed", error)
+            sessions.log(
+                kind = "error",
+                title = "Tool failed: $method",
+                detail = error.message ?: error::class.simpleName ?: "unknown error",
+                severity = "error",
+            )
+            Mcp.error(id, Mcp.INTERNAL_ERROR, error.message ?: "The tool failed on-device.")
         }
         return response.toString()
     }
@@ -371,6 +390,8 @@ class McpServer(
     }
 
     companion object {
+        private const val TAG = "McpServer"
+
         private const val APPROVAL_TIMEOUT_MS = 5 * 60 * 1000L
 
         /** How much of a write to show at an approval gate. */

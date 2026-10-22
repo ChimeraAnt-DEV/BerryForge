@@ -22,31 +22,65 @@ class SecureStore(context: Context) {
 
     private val prefs: SharedPreferences = buildPrefs(context)
 
+    /*
+     * Every access below goes through [read] / [write] rather than touching [prefs]
+     * directly.
+     *
+     * `buildPrefs` only defends the *construction* of the store. A later read can still
+     * throw: `EncryptedSharedPreferences` decrypts each value with the Keystore-backed
+     * master key on the way out, and that throws a GeneralSecurityException whenever the
+     * key was invalidated or the ciphertext was written by a key that is gone. Several
+     * callers read a value synchronously *during composition* (the account chip, the
+     * settings rows, the accounts screen), where an escaping exception takes the whole
+     * composition down — a crash on opening a screen, with no way for the user to recover.
+     * A read therefore degrades to null and a write to a no-op: the value is simply not
+     * available this session, which is the same state as an unconfigured key.
+     */
+
+    /** A value read that cannot throw. Returns [default] when the store cannot be read. */
+    private fun read(key: String, default: String? = null): String? = try {
+        prefs.getString(key, default)
+    } catch (error: Throwable) {
+        if (error is kotlinx.coroutines.CancellationException) throw error
+        Log.w(TAG, "Could not read '$key' from secure storage", error)
+        default
+    }
+
+    /** A write that cannot throw. A failure leaves the previous value in place. */
+    private fun write(block: (SharedPreferences.Editor) -> SharedPreferences.Editor) {
+        try {
+            block(prefs.edit()).apply()
+        } catch (error: Throwable) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            Log.w(TAG, "Could not write to secure storage", error)
+        }
+    }
+
     // ---- GitHub accounts (multi-account) ----
 
     /** Ordered list of GitHub login names that have a stored token. */
     var accountLogins: List<String>
-        get() = prefs.getString(KEY_ACCOUNTS, null)
+        get() = read(KEY_ACCOUNTS)
             ?.split(SEP)
             ?.filter { it.isNotBlank() }
             ?: emptyList()
         private set(value) {
-            prefs.edit().putString(KEY_ACCOUNTS, value.joinToString(SEP)).apply()
+            write { it.putString(KEY_ACCOUNTS, value.joinToString(SEP)) }
         }
 
     var activeLogin: String?
-        get() = prefs.getString(KEY_ACTIVE, null)
-        set(value) = prefs.edit().putString(KEY_ACTIVE, value).apply()
+        get() = read(KEY_ACTIVE)
+        set(value) = write { it.putString(KEY_ACTIVE, value) }
 
-    fun tokenFor(login: String): String? = prefs.getString(KEY_TOKEN_PREFIX + login, null)
+    fun tokenFor(login: String): String? = read(KEY_TOKEN_PREFIX + login)
 
     fun saveAccount(login: String, token: String) {
-        prefs.edit().putString(KEY_TOKEN_PREFIX + login, token).apply()
+        write { it.putString(KEY_TOKEN_PREFIX + login, token) }
         accountLogins = (accountLogins - login) + login
     }
 
     fun removeAccount(login: String) {
-        prefs.edit().remove(KEY_TOKEN_PREFIX + login).apply()
+        write { it.remove(KEY_TOKEN_PREFIX + login) }
         accountLogins = accountLogins - login
         if (activeLogin == login) activeLogin = accountLogins.firstOrNull()
     }
@@ -62,20 +96,20 @@ class SecureStore(context: Context) {
     // is preferred over the account token for all API calls.
 
     var githubPat: String?
-        get() = prefs.getString(KEY_GITHUB_PAT, null)
-        set(value) = prefs.edit().putString(KEY_GITHUB_PAT, value).apply()
+        get() = read(KEY_GITHUB_PAT)
+        set(value) = write { it.putString(KEY_GITHUB_PAT, value) }
 
     // ---- LLM provider ----
 
     var llmApiKey: String?
-        get() = prefs.getString(KEY_LLM_KEY, null)
-        set(value) = prefs.edit().putString(KEY_LLM_KEY, value).apply()
+        get() = read(KEY_LLM_KEY)
+        set(value) = write { it.putString(KEY_LLM_KEY, value) }
 
     // ---- MCP server ----
 
     var mcpBearerToken: String?
-        get() = prefs.getString(KEY_MCP_TOKEN, null)
-        set(value) = prefs.edit().putString(KEY_MCP_TOKEN, value).apply()
+        get() = read(KEY_MCP_TOKEN)
+        set(value) = write { it.putString(KEY_MCP_TOKEN, value) }
 
     /** Returns the existing bearer token or mints a fresh 256-bit one on first run. */
     fun mcpTokenOrCreate(): String {
@@ -90,19 +124,19 @@ class SecureStore(context: Context) {
     // ---- Tunnel providers ----
 
     var ngrokAuthtoken: String?
-        get() = prefs.getString(KEY_NGROK, null)
-        set(value) = prefs.edit().putString(KEY_NGROK, value).apply()
+        get() = read(KEY_NGROK)
+        set(value) = write { it.putString(KEY_NGROK, value) }
 
     var customRelayUrl: String?
-        get() = prefs.getString(KEY_RELAY_URL, null)
-        set(value) = prefs.edit().putString(KEY_RELAY_URL, value).apply()
+        get() = read(KEY_RELAY_URL)
+        set(value) = write { it.putString(KEY_RELAY_URL, value) }
 
     var customRelayToken: String?
-        get() = prefs.getString(KEY_RELAY_TOKEN, null)
-        set(value) = prefs.edit().putString(KEY_RELAY_TOKEN, value).apply()
+        get() = read(KEY_RELAY_TOKEN)
+        set(value) = write { it.putString(KEY_RELAY_TOKEN, value) }
 
     fun clearAll() {
-        prefs.edit().clear().apply()
+        write { it.clear() }
     }
 
     /**
